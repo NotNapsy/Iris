@@ -1,4 +1,4 @@
-// api.ts - Complete GitHub Gist version
+// api.ts - Using JSONBin.io (Free)
 const MASTER_SCRIPT = `
 print("Hello from Napsy.dev!")
 local player = game.Players.LocalPlayer
@@ -10,7 +10,10 @@ end
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-const GITHUB_TOKEN = "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"; // ← Replace with your token
+
+// JSONBin configuration - REPLACE WITH YOUR ACTUAL KEY
+const JSONBIN_API_KEY = "$2a$10$PZxjzjnml42hhjCg7M/QeOrU9HIM1wQbEs.gbMOz9wpvi5cJACdEu";
+const JSONBIN_BIN_ID = "YOUR_BIN_ID_HERE"; // We'll create this automatically
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -22,76 +25,116 @@ function generateToken(length = 20): string {
   return token;
 }
 
-// Store token in GitHub Gist
-async function storeToken(token: string, user_id: string, expires_at: number): Promise<string> {
-  const response = await fetch('https://api.github.com/gists', {
+// Global storage - we'll manage our own bin
+let storageBinId: string | null = null;
+
+// Initialize or get storage bin
+async function getStorageBin() {
+  if (storageBinId) return storageBinId;
+  
+  // Try to create a new bin
+  const response = await fetch('https://api.jsonbin.io/v3/b', {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
       'Content-Type': 'application/json',
-      'User-Agent': 'NapsyScript-API'
+      'X-Master-Key': JSONBIN_API_KEY,
+      'X-Bin-Name': 'NapsyScript Tokens'
     },
-    body: JSON.stringify({
-      description: `Script token for user ${user_id}`,
-      public: false,
-      files: {
-        [`token_${token}.json`]: {
-          content: JSON.stringify({
-            user_id: user_id,
-            script: MASTER_SCRIPT,
-            expires_at: expires_at,
-            created_at: Date.now()
-          }, null, 2)
-        }
-      }
-    })
+    body: JSON.stringify({ tokens: {} })
   });
   
   const data = await response.json();
-  if (!response.ok) {
-    throw new Error(`GitHub API error: ${data.message}`);
+  if (data.metadata) {
+    storageBinId = data.metadata.id;
+    return storageBinId;
   }
-  return data.id; // Return gist ID
+  throw new Error('Failed to create storage bin');
 }
 
-// Get token from GitHub Gists
-async function getToken(token: string): Promise<any> {
-  const response = await fetch('https://api.github.com/gists', {
+// Store token in JSONBin
+async function storeToken(token: string, user_id: string, expires_at: number) {
+  const binId = await getStorageBin();
+  
+  // First, get current data
+  const getResponse = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
     headers: {
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
-      'User-Agent': 'NapsyScript-API'
+      'X-Master-Key': JSONBIN_API_KEY
     }
   });
   
-  if (!response.ok) {
-    throw new Error('Failed to fetch gists');
-  }
+  const currentData = await getResponse.json();
+  const tokens = currentData.record.tokens || {};
   
-  const gists = await response.json();
+  // Add new token
+  tokens[token] = {
+    user_id,
+    script: MASTER_SCRIPT,
+    expires_at,
+    created_at: Date.now()
+  };
   
-  // Search for our token file in all gists
-  for (const gist of gists) {
-    const filename = `token_${token}.json`;
-    if (gist.files && gist.files[filename]) {
-      const fileUrl = gist.files[filename].raw_url;
-      const fileResponse = await fetch(fileUrl);
-      if (fileResponse.ok) {
-        return await fileResponse.json();
-      }
-    }
-  }
-  return null;
+  // Update bin
+  const updateResponse = await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Master-Key': JSONBIN_API_KEY
+    },
+    body: JSON.stringify({ tokens })
+  });
+  
+  return await updateResponse.json();
 }
 
-// Delete expired token
-async function deleteToken(gistId: string) {
-  await fetch(`https://api.github.com/gists/${gistId}`, {
-    method: 'DELETE',
+// Get token from JSONBin
+async function getToken(token: string) {
+  const binId = await getStorageBin();
+  
+  const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
     headers: {
-      'Authorization': `Bearer ${GITHUB_TOKEN}`,
-      'User-Agent': 'NapsyScript-API'
+      'X-Master-Key': JSONBIN_API_KEY
     }
   });
+  
+  const data = await response.json();
+  const tokens = data.record.tokens || {};
+  
+  return tokens[token] || null;
+}
+
+// Clean expired tokens
+async function cleanupTokens() {
+  const binId = await getStorageBin();
+  
+  const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
+    headers: {
+      'X-Master-Key': JSONBIN_API_KEY
+    }
+  });
+  
+  const data = await response.json();
+  const tokens = data.record.tokens || {};
+  const now = Date.now();
+  let updated = false;
+  
+  // Remove expired tokens
+  for (const [token, entry] of Object.entries(tokens)) {
+    if ((entry as any).expires_at < now) {
+      delete tokens[token];
+      updated = true;
+    }
+  }
+  
+  if (updated) {
+    await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': JSONBIN_API_KEY
+      },
+      body: JSON.stringify({ tokens })
+    });
+  }
 }
 
 Deno.serve(async (req) => {
@@ -108,6 +151,9 @@ Deno.serve(async (req) => {
   }
 
   try {
+    // Clean up expired tokens on each request
+    await cleanupTokens();
+
     // POST /publishScript
     if (url.pathname === '/publishScript' && req.method === 'POST') {
       const apiKey = req.headers.get('X-Admin-Api-Key');
@@ -125,7 +171,7 @@ Deno.serve(async (req) => {
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-      // Store in GitHub Gist (persistent!)
+      // Store in JSONBin (persistent!)
       await storeToken(token, body.discord_userid, expiresAt);
 
       const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
@@ -166,7 +212,7 @@ Deno.serve(async (req) => {
       return Response.json({ 
         message: 'NapsyScript API',
         status: 'running', 
-        storage: 'github-gists'
+        storage: 'jsonbin-io'
       }, { headers: corsHeaders });
     }
 
