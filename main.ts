@@ -10,8 +10,6 @@ end
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-
-// JSONBin configuration - REPLACE WITH YOUR ACTUAL KEY
 const JSONBIN_API_KEY = "$2a$10$PZxjzjnml42hhjCg7M/QeOrU9HIM1wQbEs.gbMOz9wpvi5cJACdEu";
 const JSONBIN_BIN_ID = "68ee9acdd0ea881f40a2f1f7"; // We'll create this automatically
 
@@ -25,45 +23,32 @@ function generateToken(length = 20): string {
   return token;
 }
 
-// Global storage - we'll manage our own bin
-let storageBinId: string | null = null;
-
-// Initialize or get storage bin
-async function getStorageBin() {
-  if (storageBinId) return storageBinId;
-  
-  // Try to create a new bin
-  const response = await fetch('https://api.jsonbin.io/v3/b', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Master-Key': JSONBIN_API_KEY,
-      'X-Bin-Name': 'NapsyScript Tokens'
-    },
-    body: JSON.stringify({ tokens: {} })
-  });
-  
-  const data = await response.json();
-  if (data.metadata) {
-    storageBinId = data.metadata.id;
-    return storageBinId;
-  }
-  throw new Error('Failed to create storage bin');
-}
-
 // Store token in JSONBin
 async function storeToken(token: string, user_id: string, expires_at: number) {
-  const binId = await getStorageBin();
-  
-  // First, get current data
-  const getResponse = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
+  // First, get the current data
+  const getResponse = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
     headers: {
       'X-Master-Key': JSONBIN_API_KEY
     }
   });
   
+  if (!getResponse.ok) {
+    // Bin doesn't exist, create it
+    const createResponse = await fetch('https://api.jsonbin.io/v3/b', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Master-Key': JSONBIN_API_KEY,
+        'X-Bin-Name': 'NapsyScript Tokens'
+      },
+      body: JSON.stringify({})
+    });
+    const createData = await createResponse.json();
+    // You'll need to set JSONBIN_BIN_ID to createData.metadata.id
+  }
+  
   const currentData = await getResponse.json();
-  const tokens = currentData.record.tokens || {};
+  const tokens = currentData.record || {};
   
   // Add new token
   tokens[token] = {
@@ -74,66 +59,85 @@ async function storeToken(token: string, user_id: string, expires_at: number) {
   };
   
   // Update bin
-  const updateResponse = await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
+  const updateResponse = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'X-Master-Key': JSONBIN_API_KEY
     },
-    body: JSON.stringify({ tokens })
+    body: JSON.stringify(tokens)
   });
   
   return await updateResponse.json();
 }
 
-// Get token from JSONBin
+// Get token from JSONBin - FIXED VERSION
 async function getToken(token: string) {
-  const binId = await getStorageBin();
-  
-  const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
-    headers: {
-      'X-Master-Key': JSONBIN_API_KEY
+  try {
+    const response = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
+      headers: {
+        'X-Master-Key': JSONBIN_API_KEY
+      }
+    });
+    
+    if (!response.ok) {
+      console.log('JSONBin response not OK:', response.status);
+      return null;
     }
-  });
-  
-  const data = await response.json();
-  const tokens = data.record.tokens || {};
-  
-  return tokens[token] || null;
+    
+    const data = await response.json();
+    console.log('JSONBin data:', JSON.stringify(data, null, 2)); // Debug log
+    
+    // The tokens are stored directly in the record, not in record.tokens
+    const tokens = data.record || {};
+    const entry = tokens[token];
+    
+    console.log('Looking for token:', token);
+    console.log('Found entry:', entry);
+    
+    return entry || null;
+  } catch (error) {
+    console.error('Error fetching token:', error);
+    return null;
+  }
 }
 
 // Clean expired tokens
 async function cleanupTokens() {
-  const binId = await getStorageBin();
-  
-  const response = await fetch(`https://api.jsonbin.io/v3/b/${binId}/latest`, {
-    headers: {
-      'X-Master-Key': JSONBIN_API_KEY
-    }
-  });
-  
-  const data = await response.json();
-  const tokens = data.record.tokens || {};
-  const now = Date.now();
-  let updated = false;
-  
-  // Remove expired tokens
-  for (const [token, entry] of Object.entries(tokens)) {
-    if ((entry as any).expires_at < now) {
-      delete tokens[token];
-      updated = true;
-    }
-  }
-  
-  if (updated) {
-    await fetch(`https://api.jsonbin.io/v3/b/${binId}`, {
-      method: 'PUT',
+  try {
+    const response = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}/latest`, {
       headers: {
-        'Content-Type': 'application/json',
         'X-Master-Key': JSONBIN_API_KEY
-      },
-      body: JSON.stringify({ tokens })
+      }
     });
+    
+    if (!response.ok) return;
+    
+    const data = await response.json();
+    const tokens = data.record || {};
+    const now = Date.now();
+    let updated = false;
+    
+    // Remove expired tokens
+    for (const [token, entry] of Object.entries(tokens)) {
+      if ((entry as any).expires_at < now) {
+        delete tokens[token];
+        updated = true;
+      }
+    }
+    
+    if (updated) {
+      await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Master-Key': JSONBIN_API_KEY
+        },
+        body: JSON.stringify(tokens)
+      });
+    }
+  } catch (error) {
+    console.error('Cleanup error:', error);
   }
 }
 
@@ -151,7 +155,7 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Clean up expired tokens on each request
+    // Clean up expired tokens
     await cleanupTokens();
 
     // POST /publishScript
@@ -171,7 +175,7 @@ Deno.serve(async (req) => {
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-      // Store in JSONBin (persistent!)
+      // Store in JSONBin
       await storeToken(token, body.discord_userid, expiresAt);
 
       const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
@@ -193,7 +197,10 @@ Deno.serve(async (req) => {
         return new Response('Token required', { status: 400 });
       }
 
+      console.log('Fetching token:', token); // Debug
       const entry = await getToken(token);
+      console.log('Retrieved entry:', entry); // Debug
+      
       if (!entry) {
         return new Response('Token not found', { status: 404 });
       }
@@ -205,15 +212,6 @@ Deno.serve(async (req) => {
       return new Response(entry.script, {
         headers: { 'Content-Type': 'text/plain', ...corsHeaders },
       });
-    }
-
-    // Root endpoint
-    if (url.pathname === '/' && req.method === 'GET') {
-      return Response.json({ 
-        message: 'NapsyScript API',
-        status: 'running', 
-        storage: 'jsonbin-io'
-      }, { headers: corsHeaders });
     }
 
     return new Response('Not found', { status: 404 });
