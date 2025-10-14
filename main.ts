@@ -1,4 +1,4 @@
-// api.ts - Standalone Deno function
+// api.ts - With Deno KV for persistence
 const MASTER_SCRIPT = `
 print("Hello from Napsy.dev!")
 local player = game.Players.LocalPlayer
@@ -11,9 +11,6 @@ end
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// Simple in-memory store (use Deno KV for persistence if needed)
-const tokenStore = new Map<string, { user_id: string; script: string; expires_at: number }>();
-
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
   const randomBytes = crypto.getRandomValues(new Uint8Array(length));
@@ -24,12 +21,14 @@ function generateToken(length = 20): string {
   return token;
 }
 
-// Clean expired tokens
-function cleanupTokens() {
+// Clean expired tokens from KV
+async function cleanupTokens(kv: Deno.Kv) {
+  const entries = kv.list({ prefix: ["token"] });
   const now = Date.now();
-  for (const [token, data] of tokenStore.entries()) {
-    if (data.expires_at < now) {
-      tokenStore.delete(token);
+  
+  for await (const entry of entries) {
+    if (entry.value.expires_at < now) {
+      await kv.delete(entry.key);
     }
   }
 }
@@ -43,14 +42,16 @@ Deno.serve(async (req) => {
     'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Api-Key',
   };
 
-  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Open KV database (persistent storage)
+  const kv = await Deno.openKv();
+
   try {
-    // Clean up on each request
-    cleanupTokens();
+    // Clean up expired tokens
+    await cleanupTokens(kv);
 
     // POST /publishScript
     if (url.pathname === '/publishScript' && req.method === 'POST') {
@@ -75,13 +76,14 @@ Deno.serve(async (req) => {
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-      tokenStore.set(token, {
+      // Store in persistent KV database
+      await kv.set(["token", token], {
         user_id: body.discord_userid,
         script: MASTER_SCRIPT,
         expires_at: expiresAt,
+        created_at: Date.now()
       });
 
-      // Use your clean domain
       const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
       const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
 
@@ -101,17 +103,21 @@ Deno.serve(async (req) => {
         return new Response('Token required', { status: 400 });
       }
 
-      const entry = tokenStore.get(token);
-      if (!entry) {
+      // Get from persistent storage
+      const entry = await kv.get(["token", token]);
+      
+      if (!entry.value) {
         return new Response('Token not found', { status: 404 });
       }
 
-      if (entry.expires_at < Date.now()) {
-        tokenStore.delete(token);
+      const data = entry.value as any;
+      
+      if (data.expires_at < Date.now()) {
+        await kv.delete(["token", token]);
         return new Response('Token expired', { status: 410 });
       }
 
-      return new Response(entry.script, {
+      return new Response(data.script, {
         headers: { 
           'Content-Type': 'text/plain',
           ...corsHeaders 
@@ -124,6 +130,7 @@ Deno.serve(async (req) => {
       return Response.json({ 
         message: 'NapsyScript API',
         status: 'running',
+        storage: 'persistent (Deno KV)',
         endpoints: {
           publish: 'POST /publishScript',
           get_script: 'GET /scripts/:token'
@@ -136,5 +143,7 @@ Deno.serve(async (req) => {
   } catch (error) {
     console.error('Error:', error);
     return Response.json({ error: 'Internal server error' }, { status: 500 });
+  } finally {
+    kv.close();
   }
 });
