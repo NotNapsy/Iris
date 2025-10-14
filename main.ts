@@ -1,4 +1,4 @@
-// api.ts - Fixed JSONBin version
+// api.ts - Auto-create JSONBin
 const MASTER_SCRIPT = `
 print("Hello from Napsy.dev!")
 local player = game.Players.LocalPlayer
@@ -10,10 +10,10 @@ end
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-
-// JSONBin configuration - Use v2 API with your key
 const JSONBIN_API_KEY = "$2a$10$PZxjzjnml42hhjCg7M/QeOrU9HIM1wQbEs.gbMOz9wpvi5cJACdEu";
-const JSONBIN_BIN_ID = "68ee9d9f43b1c97be96804b1";
+
+// We'll create the bin automatically
+let JSONBIN_BIN_ID: string | null = null;
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -25,39 +25,67 @@ function generateToken(length = 20): string {
   return token;
 }
 
+// Create or get the storage bin
+async function getOrCreateBin(): Promise<string> {
+  if (JSONBIN_BIN_ID) return JSONBIN_BIN_ID;
+  
+  // Try to create a new bin
+  const createResponse = await fetch('https://api.jsonbin.io/v2/b', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'secret-key': JSONBIN_API_KEY,
+      'X-Bin-Name': 'NapsyScript Tokens',
+      'X-Bin-Private': 'true'
+    },
+    body: JSON.stringify({ tokens: {} })
+  });
+  
+  if (!createResponse.ok) {
+    throw new Error(`Failed to create bin: ${createResponse.status}`);
+  }
+  
+  const createData = await createResponse.json();
+  JSONBIN_BIN_ID = createData.metadata.id;
+  console.log('Created new bin:', JSONBIN_BIN_ID);
+  return JSONBIN_BIN_ID;
+}
+
 // Store token in JSONBin
 async function storeToken(token: string, user_id: string, expires_at: number) {
-  // First, get the current data using v2 API
-  const getResponse = await fetch(`https://api.jsonbin.io/v2/b/${JSONBIN_BIN_ID}/latest`, {
+  const binId = await getOrCreateBin();
+  
+  // First, get the current data
+  const getResponse = await fetch(`https://api.jsonbin.io/v2/b/${binId}/latest`, {
     headers: {
       'secret-key': JSONBIN_API_KEY
     }
   });
   
-  let tokens = {};
+  let data = { tokens: {} };
   
   if (getResponse.ok) {
     const currentData = await getResponse.json();
-    tokens = currentData || {};
+    data = currentData || { tokens: {} };
   }
   
   // Add new token
-  tokens[token] = {
+  data.tokens[token] = {
     user_id,
     script: MASTER_SCRIPT,
     expires_at,
     created_at: Date.now()
   };
   
-  // Update bin using v2 API
-  const updateResponse = await fetch(`https://api.jsonbin.io/v2/b/${JSONBIN_BIN_ID}`, {
+  // Update bin
+  const updateResponse = await fetch(`https://api.jsonbin.io/v2/b/${binId}`, {
     method: 'PUT',
     headers: {
       'Content-Type': 'application/json',
       'secret-key': JSONBIN_API_KEY,
       'versioning': 'false'
     },
-    body: JSON.stringify(tokens)
+    body: JSON.stringify(data)
   });
   
   if (!updateResponse.ok) {
@@ -67,10 +95,11 @@ async function storeToken(token: string, user_id: string, expires_at: number) {
   return await updateResponse.json();
 }
 
-// Get token from JSONBin - FIXED VERSION
+// Get token from JSONBin
 async function getToken(token: string) {
   try {
-    const response = await fetch(`https://api.jsonbin.io/v2/b/${JSONBIN_BIN_ID}/latest`, {
+    const binId = await getOrCreateBin();
+    const response = await fetch(`https://api.jsonbin.io/v2/b/${binId}/latest`, {
       headers: {
         'secret-key': JSONBIN_API_KEY
       }
@@ -82,11 +111,7 @@ async function getToken(token: string) {
     }
     
     const data = await response.json();
-    console.log('All tokens in bin:', Object.keys(data));
-    
-    const entry = data[token];
-    console.log('Looking for token:', token);
-    console.log('Found entry:', entry);
+    const entry = data.tokens?.[token];
     
     return entry || null;
   } catch (error) {
@@ -98,7 +123,8 @@ async function getToken(token: string) {
 // Clean expired tokens
 async function cleanupTokens() {
   try {
-    const response = await fetch(`https://api.jsonbin.io/v2/b/${JSONBIN_BIN_ID}/latest`, {
+    const binId = await getOrCreateBin();
+    const response = await fetch(`https://api.jsonbin.io/v2/b/${binId}/latest`, {
       headers: {
         'secret-key': JSONBIN_API_KEY
       }
@@ -107,7 +133,7 @@ async function cleanupTokens() {
     if (!response.ok) return;
     
     const data = await response.json();
-    const tokens = data;
+    const tokens = data.tokens || {};
     const now = Date.now();
     let updated = false;
     
@@ -120,14 +146,14 @@ async function cleanupTokens() {
     }
     
     if (updated) {
-      await fetch(`https://api.jsonbin.io/v2/b/${JSONBIN_BIN_ID}`, {
+      await fetch(`https://api.jsonbin.io/v2/b/${binId}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'secret-key': JSONBIN_API_KEY,
           'versioning': 'false'
         },
-        body: JSON.stringify(tokens)
+        body: JSON.stringify({ tokens })
       });
     }
   } catch (error) {
@@ -170,7 +196,6 @@ Deno.serve(async (req) => {
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
       console.log('Storing token:', token);
-      // Store in JSONBin
       await storeToken(token, body.discord_userid, expiresAt);
       console.log('Token stored successfully');
 
@@ -193,9 +218,7 @@ Deno.serve(async (req) => {
         return new Response('Token required', { status: 400 });
       }
 
-      console.log('Fetching token:', token);
       const entry = await getToken(token);
-      console.log('Retrieved entry:', entry);
       
       if (!entry) {
         return new Response('Token not found', { status: 404 });
@@ -215,7 +238,7 @@ Deno.serve(async (req) => {
       return Response.json({ 
         message: 'NapsyScript API',
         status: 'running',
-        storage: 'jsonbin-v2'
+        storage: 'jsonbin-auto'
       }, { headers: corsHeaders });
     }
 
