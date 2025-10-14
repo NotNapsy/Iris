@@ -1,12 +1,37 @@
-// api.ts
+// api.ts - Using Deno KV with robust script loading
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// This works reliably in both local and Deno Deploy
-const SCRIPT_CONTENT = await Deno.readTextFile(
-  new URL('./obf.lua', import.meta.url)
-);
+// Try multiple methods to load the script
+async function loadScript(): Promise<string> {
+  // Method 1: Try direct file read
+  try {
+    const content = await Deno.readTextFile("./obf.lua");
+    console.log("Script loaded from file");
+    return content;
+  } catch (error) {
+    console.log("File read failed, trying alternative methods...");
+  }
 
+  // Method 2: Try with import.meta.url
+  try {
+    const content = await Deno.readTextFile(
+      new URL('./obf.lua', import.meta.url)
+    );
+    console.log("Script loaded via import.meta.url");
+    return content;
+  } catch (error) {
+    console.log("import.meta.url failed");
+  }
+
+  // Load script at startup
+let SCRIPT_CONTENT: string;
+try {
+  SCRIPT_CONTENT = await loadScript();
+} catch (error) {
+  console.error("All script loading methods failed:", error);
+  SCRIPT_CONTENT = "-- Script loading failed";
+}
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
