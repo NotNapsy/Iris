@@ -13,7 +13,7 @@ const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9L
 
 // JSONBin configuration - REPLACE WITH YOUR ACTUAL KEY
 const JSONBIN_API_KEY = "$2a$10$PZxjzjnml42hhjCg7M/QeOrU9HIM1wQbEs.gbMOz9wpvi5cJACdEu";
-const JSONBIN_BIN_ID = "YOUR_BIN_ID_HERE"; // We'll create this automatically
+const JSONBIN_BIN_ID = "68ee9acdd0ea881f40a2f1f7"; // We'll create this automatically
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
