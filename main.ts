@@ -1,8 +1,17 @@
 // api.ts - Using Deno KV (Built-in database)
-const SCRIPT_URL = "https://raw.githubusercontent.com/NotNapsy/Iris/refs/heads/main/obf.lua";
-
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
+
+async function readScriptFromFile(): Promise<string> {
+  try {
+    // Read the script from a local file in the same directory
+    const scriptContent = await Deno.readTextFile("./script.lua");
+    return scriptContent;
+  } catch (error) {
+    console.error('Failed to read script file:', error);
+    throw new Error('Could not read script file');
+  }
+}
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -12,19 +21,6 @@ function generateToken(length = 20): string {
     token += chars[randomBytes[i] % chars.length];
   }
   return token;
-}
-
-async function fetchScriptFromGitHub(): Promise<string> {
-  try {
-    const response = await fetch(SCRIPT_URL);
-    if (!response.ok) {
-      throw new Error(`GitHub fetch failed: ${response.status} ${response.statusText}`);
-    }
-    return await response.text();
-  } catch (error) {
-    console.error('Failed to fetch script from GitHub:', error);
-    throw new Error('Could not retrieve script from repository');
-  }
 }
 
 Deno.serve(async (req) => {
@@ -111,14 +107,14 @@ Deno.serve(async (req) => {
         return new Response('Token expired', { status: 410 });
       }
 
-      // Fetch the latest script from GitHub when requested
+      // Read the script from local file when requested
       try {
-        const scriptContent = await fetchScriptFromGitHub();
+        const scriptContent = await readScriptFromFile();
         return new Response(scriptContent, {
           headers: { 'Content-Type': 'text/plain', ...corsHeaders },
         });
       } catch (error) {
-        return new Response('Failed to fetch script from repository', { status: 502 });
+        return new Response('Failed to read script file', { status: 500 });
       }
     }
 
@@ -128,7 +124,7 @@ Deno.serve(async (req) => {
         message: 'NapsyScript API',
         status: 'running',
         storage: 'deno-kv-persistent',
-        script_source: 'github-repository'
+        script_source: 'local-file'
       }, { headers: corsHeaders });
     }
 
