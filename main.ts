@@ -1,37 +1,9 @@
-// api.ts - Using Deno KV with robust script loading
+// api.ts - Using Deno KV with environment variable for script
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// Try multiple methods to load the script
-async function loadScript(): Promise<string> {
-  // Method 1: Try direct file read
-  try {
-    const content = await Deno.readTextFile("./obf.lua");
-    console.log("Script loaded from file");
-    return content;
-  } catch (error) {
-    console.log("File read failed, trying alternative methods...");
-  }
-
-  // Method 2: Try with import.meta.url
-  try {
-    const content = await Deno.readTextFile(
-      new URL('./obf.lua', import.meta.url)
-    );
-    console.log("Script loaded via import.meta.url");
-    return content;
-  } catch (error) {
-    console.log("import.meta.url failed");
-  }
-
-  // Load script at startup
-let SCRIPT_CONTENT: string;
-try {
-  SCRIPT_CONTENT = await loadScript();
-} catch (error) {
-  console.error("All script loading methods failed:", error);
-  SCRIPT_CONTENT = "-- Script loading failed";
-}
+// Get script from environment variable
+const SCRIPT_CONTENT = Deno.env.get("OBFUSCATED_SCRIPT") || "-- Error: Script not configured in environment variables";
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -127,15 +99,10 @@ Deno.serve(async (req) => {
         return new Response('Token expired', { status: 410 });
       }
 
-      // Read the script from local file when requested
-      try {
-        const scriptContent = await readScriptFromFile();
-        return new Response(scriptContent, {
-          headers: { 'Content-Type': 'text/plain', ...corsHeaders },
-        });
-      } catch (error) {
-        return new Response('Failed to read script file', { status: 500 });
-      }
+      // Serve the script from environment variable
+      return new Response(SCRIPT_CONTENT, {
+        headers: { 'Content-Type': 'text/plain', ...corsHeaders },
+      });
     }
 
     // Root endpoint
@@ -144,7 +111,7 @@ Deno.serve(async (req) => {
         message: 'NapsyScript API',
         status: 'running',
         storage: 'deno-kv-persistent',
-        script_source: 'local-file'
+        script_source: 'environment-variable'
       }, { headers: corsHeaders });
     }
 
