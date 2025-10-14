@@ -1,4 +1,4 @@
-// api.ts - Simple file-based storage
+// api.ts - Using GitHub Gists (Free)
 const MASTER_SCRIPT = `
 print("Hello from Napsy.dev!")
 local player = game.Players.LocalPlayer
@@ -10,9 +10,7 @@ end
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-
-// Simple in-memory storage with file backup
-let tokenStore: Map<string, { user_id: string; script: string; expires_at: number }> = new Map();
+const GITHUB_TOKEN = "your_github_personal_token"; // Free from GitHub
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -24,50 +22,51 @@ function generateToken(length = 20): string {
   return token;
 }
 
-// Initialize storage (try to load from file)
-async function initializeStorage() {
-  try {
-    // Try to load existing tokens from file
-    const data = await Deno.readTextFile('./tokens.json');
-    const parsed = JSON.parse(data);
-    tokenStore = new Map(Object.entries(parsed));
-    console.log('Loaded tokens from storage');
-  } catch (_error) {
-    // File doesn't exist yet, start fresh
-    tokenStore = new Map();
-    console.log('Starting with fresh storage');
-  }
+// Store token in GitHub Gist
+async function storeToken(token: string, user_id: string, expires_at: number) {
+  const response = await fetch('https://api.github.com/gists', {
+    method: 'POST',
+    headers: {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      description: `Token for ${user_id}`,
+      public: false,
+      files: {
+        [`token-${token}.json`]: {
+          content: JSON.stringify({
+            user_id,
+            script: MASTER_SCRIPT,
+            expires_at,
+            created_at: Date.now()
+          })
+        }
+      }
+    })
+  });
+  return await response.json();
 }
 
-// Save tokens to file
-async function saveTokens() {
-  try {
-    const data = Object.fromEntries(tokenStore);
-    await Deno.writeTextFile('./tokens.json', JSON.stringify(data));
-  } catch (error) {
-    console.error('Failed to save tokens:', error);
-  }
-}
-
-// Clean expired tokens
-function cleanupTokens() {
-  const now = Date.now();
-  let cleaned = false;
+// Get token from GitHub Gist
+async function getToken(token: string) {
+  // We'll search through gists (simple approach)
+  const response = await fetch('https://api.github.com/gists', {
+    headers: {
+      'Authorization': `token ${GITHUB_TOKEN}`,
+    }
+  });
+  const gists = await response.json();
   
-  for (const [token, data] of tokenStore.entries()) {
-    if (data.expires_at < now) {
-      tokenStore.delete(token);
-      cleaned = true;
+  for (const gist of gists) {
+    if (gist.files[`token-${token}.json`]) {
+      const file = gist.files[`token-${token}.json`];
+      const contentResponse = await fetch(file.raw_url);
+      return await contentResponse.json();
     }
   }
-  
-  if (cleaned) {
-    saveTokens(); // Save after cleanup
-  }
+  return null;
 }
-
-// Initialize storage when the server starts
-await initializeStorage();
 
 Deno.serve(async (req) => {
   const url = new URL(req.url);
@@ -83,41 +82,25 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Clean up expired tokens on each request
-    cleanupTokens();
-
     // POST /publishScript
     if (url.pathname === '/publishScript' && req.method === 'POST') {
       const apiKey = req.headers.get('X-Admin-Api-Key');
       
       if (!apiKey || apiKey !== ADMIN_API_KEY) {
-        return Response.json({ error: 'Unauthorized' }, { 
-          status: 401, 
-          headers: corsHeaders 
-        });
+        return Response.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders });
       }
 
       const body = await req.json();
       
       if (!body?.discord_userid) {
-        return Response.json({ error: 'discord_userid required' }, { 
-          status: 400, 
-          headers: corsHeaders 
-        });
+        return Response.json({ error: 'discord_userid required' }, { status: 400, headers: corsHeaders });
       }
 
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-      // Store in memory
-      tokenStore.set(token, {
-        user_id: body.discord_userid,
-        script: MASTER_SCRIPT,
-        expires_at: expiresAt,
-      });
-
-      // Save to file
-      await saveTokens();
+      // Store in GitHub Gist
+      await storeToken(token, body.discord_userid, expiresAt);
 
       const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
       const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
@@ -134,47 +117,24 @@ Deno.serve(async (req) => {
     if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
       const token = url.pathname.split('/')[2];
       
-      if (!token) {
-        return new Response('Token required', { status: 400 });
-      }
-
-      const entry = tokenStore.get(token);
+      const entry = await getToken(token);
       if (!entry) {
         return new Response('Token not found', { status: 404 });
       }
 
       if (entry.expires_at < Date.now()) {
-        tokenStore.delete(token);
-        await saveTokens();
         return new Response('Token expired', { status: 410 });
       }
 
       return new Response(entry.script, {
-        headers: { 
-          'Content-Type': 'text/plain',
-          ...corsHeaders 
-        },
+        headers: { 'Content-Type': 'text/plain', ...corsHeaders },
       });
     }
 
-    // Root endpoint
-    if (url.pathname === '/' && req.method === 'GET') {
-      return Response.json({ 
-        message: 'NapsyScript API',
-        status: 'running',
-        storage: 'file-based',
-        token_count: tokenStore.size,
-        endpoints: {
-          publish: 'POST /publishScript',
-          get_script: 'GET /scripts/:token'
-        }
-      }, { headers: corsHeaders });
-    }
-
-    return new Response('Not found', { status: 404 });
+    return Response.json({ status: 'running', storage: 'github-gists' }, { headers: corsHeaders });
 
   } catch (error) {
     console.error('Error:', error);
-    return Response.json({ error: 'Internal server error' }, { status: 500 });
+    return Response.json({ error: 'Server error' }, { status: 500 });
   }
 });
