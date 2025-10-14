@@ -1,5 +1,5 @@
 // api.ts - Using Deno KV (Built-in database)
-const SCRIPT_URL = "https://raw.githubusercontent.com/NotNapsy/Iris/refs/heads/main/obf.lua?token=GHSAT0AAAAAADNE4EJD5WMJOIQKAGNVMKRC2HOYKFA";
+const SCRIPT_URL = "https://raw.githubusercontent.com/NotNapsy/Iris/refs/heads/main/obf.lua";
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
