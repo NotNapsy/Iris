@@ -1,38 +1,37 @@
-// api.ts - Fixed with working debug endpoint
+// api.ts - FIXED VERSION
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// Auto-generated script parts
-const SCRIPT_PART1 = Deno.env.get("SCRIPT_PART1") || "";
-const SCRIPT_PART2 = Deno.env.get("SCRIPT_PART2") || "";
-const SCRIPT_PART3 = Deno.env.get("SCRIPT_PART3") || "";
-const SCRIPT_PART4 = Deno.env.get("SCRIPT_PART4") || "";
-const SCRIPT_PART5 = Deno.env.get("SCRIPT_PART5") || "";
-const SCRIPT_PART6 = Deno.env.get("SCRIPT_PART6") || "";
-const SCRIPT_PART7 = Deno.env.get("SCRIPT_PART7") || "";
-const SCRIPT_PART8 = Deno.env.get("SCRIPT_PART8") || "";
+// Read ALL environment variables
+const SCRIPT_PARTS = [
+    Deno.env.get("SCRIPT_PART1"),
+    Deno.env.get("SCRIPT_PART2"), 
+    Deno.env.get("SCRIPT_PART3"),
+    Deno.env.get("SCRIPT_PART4"),
+    Deno.env.get("SCRIPT_PART5"),
+    Deno.env.get("SCRIPT_PART6"),
+    Deno.env.get("SCRIPT_PART7"),
+    Deno.env.get("SCRIPT_PART8")
+];
 
-const ORIGINAL_SCRIPT = [
-    SCRIPT_PART1,
-    SCRIPT_PART2,
-    SCRIPT_PART3,
-    SCRIPT_PART4,
-    SCRIPT_PART5,
-    SCRIPT_PART6,
-    SCRIPT_PART7,
-    SCRIPT_PART8
-].join('\n');
+console.log("=== ENVIRONMENT VARIABLES ===");
+SCRIPT_PARTS.forEach((part, index) => {
+    console.log(`PART${index + 1}:`, part ? `${part.length} chars` : "NOT SET");
+});
 
-console.log("=== SCRIPT DEBUG INFO ===");
-console.log("Total characters:", ORIGINAL_SCRIPT.length);
-console.log("Part 1 chars:", SCRIPT_PART1.length);
-console.log("Part 2 chars:", SCRIPT_PART2.length);
-console.log("Part 3 chars:", SCRIPT_PART3.length);
-console.log("Part 4 chars:", SCRIPT_PART4.length);
-console.log("Part 5 chars:", SCRIPT_PART5.length);
-console.log("Part 6 chars:", SCRIPT_PART6.length);
-console.log("Part 7 chars:", SCRIPT_PART7.length);
-console.log("Part 8 chars:", SCRIPT_PART8.length);
+const ORIGINAL_SCRIPT = SCRIPT_PARTS.filter(part => part).join('\n');
+
+console.log("TOTAL SCRIPT LENGTH:", ORIGINAL_SCRIPT.length);
+
+// Fallback script
+const FALLBACK_SCRIPT = `
+print("Iris Hub - Environment Variables Issue")
+print("If you see this, the environment variables are not being read properly")
+`;
+
+function getScript(): string {
+    return ORIGINAL_SCRIPT.length > 1000 ? ORIGINAL_SCRIPT : FALLBACK_SCRIPT;
+}
 
 function generateToken(length = 20): string {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -57,40 +56,24 @@ Deno.serve(async (req) => {
         return new Response(null, { headers: corsHeaders });
     }
 
-    // DEBUG ENDPOINT - Put this FIRST so it's easy to access
+    // DEBUG ENDPOINT - This will show what's happening
     if (url.pathname === '/debug' && req.method === 'GET') {
-        const parts = [
-            { name: 'SCRIPT_PART1', length: SCRIPT_PART1.length, preview: SCRIPT_PART1.substring(0, 50) },
-            { name: 'SCRIPT_PART2', length: SCRIPT_PART2.length, preview: SCRIPT_PART2.substring(0, 50) },
-            { name: 'SCRIPT_PART3', length: SCRIPT_PART3.length, preview: SCRIPT_PART3.substring(0, 50) },
-            { name: 'SCRIPT_PART4', length: SCRIPT_PART4.length, preview: SCRIPT_PART4.substring(0, 50) },
-            { name: 'SCRIPT_PART5', length: SCRIPT_PART5.length, preview: SCRIPT_PART5.substring(0, 50) },
-            { name: 'SCRIPT_PART6', length: SCRIPT_PART6.length, preview: SCRIPT_PART6.substring(0, 50) },
-            { name: 'SCRIPT_PART7', length: SCRIPT_PART7.length, preview: SCRIPT_PART7.substring(0, 50) },
-            { name: 'SCRIPT_PART8', length: SCRIPT_PART8.length, preview: SCRIPT_PART8.substring(0, 50) },
-        ];
-
-        return Response.json({
-            total_script_length: ORIGINAL_SCRIPT.length,
-            script_configured: ORIGINAL_SCRIPT.length > 1000,
-            environment_variables: parts,
-            issues: parts.filter(p => p.length === 0).map(p => `${p.name} is empty`)
-        }, { headers: corsHeaders });
+        const debugInfo = {
+            total_length: ORIGINAL_SCRIPT.length,
+            using_fallback: ORIGINAL_SCRIPT.length <= 1000,
+            parts: SCRIPT_PARTS.map((part, index) => ({
+                name: `SCRIPT_PART${index + 1}`,
+                length: part ? part.length : 0,
+                set: !!part,
+                preview: part ? part.substring(0, 50) + '...' : 'NOT SET'
+            }))
+        };
+        return Response.json(debugInfo, { headers: corsHeaders });
     }
 
     const kv = await Deno.openKv();
 
     try {
-        // Clean up expired tokens
-        const entries = kv.list({ prefix: ["token"] });
-        const now = Date.now();
-        
-        for await (const entry of entries) {
-            if (entry.value.expires_at < now) {
-                await kv.delete(entry.key);
-            }
-        }
-
         // POST /publishScript
         if (url.pathname === '/publishScript' && req.method === 'POST') {
             const apiKey = req.headers.get('X-Admin-Api-Key');
@@ -122,7 +105,6 @@ Deno.serve(async (req) => {
                 script_url: scriptUrl,
                 loadstring: loadstringStr,
                 expires_at: new Date(expiresAt).toISOString(),
-                script_configured: ORIGINAL_SCRIPT.length > 1000
             }, { headers: corsHeaders });
         }
 
@@ -147,19 +129,8 @@ Deno.serve(async (req) => {
                 return new Response('Token expired', { status: 410 });
             }
 
-            // Check if script is properly configured
-            if (ORIGINAL_SCRIPT.length < 1000) {
-                return new Response('-- Error: Script not properly configured in environment variables. Check /debug endpoint for details.', {
-                    status: 500,
-                    headers: { 'Content-Type': 'text/plain', ...corsHeaders }
-                });
-            }
-
-            // Simple obfuscation
-            let obfuscatedScript = ORIGINAL_SCRIPT;
-            // Add your obfuscation logic here
-            
-            return new Response(obfuscatedScript, {
+            const scriptContent = getScript();
+            return new Response(scriptContent, {
                 headers: { 'Content-Type': 'text/plain', ...corsHeaders },
             });
         }
@@ -169,9 +140,9 @@ Deno.serve(async (req) => {
             return Response.json({ 
                 message: 'NapsyScript API',
                 status: 'running',
-                script_configured: ORIGINAL_SCRIPT.length > 1000,
-                script_length: ORIGINAL_SCRIPT.length,
-                debug: 'Visit /debug to check environment variables'
+                storage: 'deno-kv-persistent',
+                script_source: 'environment-variable',
+                script_loaded: ORIGINAL_SCRIPT.length > 1000
             }, { headers: corsHeaders });
         }
 
