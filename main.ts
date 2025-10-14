@@ -1,4 +1,4 @@
-// api.ts - Using GitHub Gists (Free)
+// api.ts - Complete GitHub Gist version
 const MASTER_SCRIPT = `
 print("Hello from Napsy.dev!")
 local player = game.Players.LocalPlayer
@@ -10,7 +10,7 @@ end
 
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-const GITHUB_TOKEN = "your_github_personal_token"; // Free from GitHub
+const GITHUB_TOKEN = "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"; // ← Replace with your token
 
 function generateToken(length = 20): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -23,49 +23,75 @@ function generateToken(length = 20): string {
 }
 
 // Store token in GitHub Gist
-async function storeToken(token: string, user_id: string, expires_at: number) {
+async function storeToken(token: string, user_id: string, expires_at: number): Promise<string> {
   const response = await fetch('https://api.github.com/gists', {
     method: 'POST',
     headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
+      'Authorization': `Bearer ${GITHUB_TOKEN}`,
       'Content-Type': 'application/json',
+      'User-Agent': 'NapsyScript-API'
     },
     body: JSON.stringify({
-      description: `Token for ${user_id}`,
+      description: `Script token for user ${user_id}`,
       public: false,
       files: {
-        [`token-${token}.json`]: {
+        [`token_${token}.json`]: {
           content: JSON.stringify({
-            user_id,
+            user_id: user_id,
             script: MASTER_SCRIPT,
-            expires_at,
+            expires_at: expires_at,
             created_at: Date.now()
-          })
+          }, null, 2)
         }
       }
     })
   });
-  return await response.json();
+  
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`GitHub API error: ${data.message}`);
+  }
+  return data.id; // Return gist ID
 }
 
-// Get token from GitHub Gist
-async function getToken(token: string) {
-  // We'll search through gists (simple approach)
+// Get token from GitHub Gists
+async function getToken(token: string): Promise<any> {
   const response = await fetch('https://api.github.com/gists', {
     headers: {
-      'Authorization': `token ${GITHUB_TOKEN}`,
+      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+      'User-Agent': 'NapsyScript-API'
     }
   });
+  
+  if (!response.ok) {
+    throw new Error('Failed to fetch gists');
+  }
+  
   const gists = await response.json();
   
+  // Search for our token file in all gists
   for (const gist of gists) {
-    if (gist.files[`token-${token}.json`]) {
-      const file = gist.files[`token-${token}.json`];
-      const contentResponse = await fetch(file.raw_url);
-      return await contentResponse.json();
+    const filename = `token_${token}.json`;
+    if (gist.files && gist.files[filename]) {
+      const fileUrl = gist.files[filename].raw_url;
+      const fileResponse = await fetch(fileUrl);
+      if (fileResponse.ok) {
+        return await fileResponse.json();
+      }
     }
   }
   return null;
+}
+
+// Delete expired token
+async function deleteToken(gistId: string) {
+  await fetch(`https://api.github.com/gists/${gistId}`, {
+    method: 'DELETE',
+    headers: {
+      'Authorization': `Bearer ${GITHUB_TOKEN}`,
+      'User-Agent': 'NapsyScript-API'
+    }
+  });
 }
 
 Deno.serve(async (req) => {
@@ -99,7 +125,7 @@ Deno.serve(async (req) => {
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
 
-      // Store in GitHub Gist
+      // Store in GitHub Gist (persistent!)
       await storeToken(token, body.discord_userid, expiresAt);
 
       const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
@@ -117,6 +143,10 @@ Deno.serve(async (req) => {
     if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
       const token = url.pathname.split('/')[2];
       
+      if (!token) {
+        return new Response('Token required', { status: 400 });
+      }
+
       const entry = await getToken(token);
       if (!entry) {
         return new Response('Token not found', { status: 404 });
@@ -131,10 +161,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    return Response.json({ status: 'running', storage: 'github-gists' }, { headers: corsHeaders });
+    // Root endpoint
+    if (url.pathname === '/' && req.method === 'GET') {
+      return Response.json({ 
+        message: 'NapsyScript API',
+        status: 'running', 
+        storage: 'github-gists'
+      }, { headers: corsHeaders });
+    }
+
+    return new Response('Not found', { status: 404 });
 
   } catch (error) {
     console.error('Error:', error);
-    return Response.json({ error: 'Server error' }, { status: 500 });
+    return Response.json({ 
+      error: 'Internal server error',
+      details: error.message 
+    }, { status: 500 });
   }
 });
