@@ -8,9 +8,6 @@ import {
 } from "./utils.ts";
 import { getScript } from "./loader.ts";
 
-// Import index.html directly from repo instead of fetching from GitHub
-import indexHtml from "./index.html?raw";
-
 serve(async (req) => {
   const url = new URL(req.url);
   let kv: Deno.Kv | null = null;
@@ -24,7 +21,32 @@ serve(async (req) => {
 
     // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-      // Serve local index.html
+      // Read index.html file directly instead of using ?raw import
+      let indexHtml: string;
+      try {
+        indexHtml = await Deno.readTextFile("./index.html");
+      } catch (error) {
+        // Fallback HTML if file not found
+        indexHtml = `<!DOCTYPE html>
+<html>
+<head>
+    <title>Script Service</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .container { text-align: center; margin-top: 50px; }
+        h1 { color: #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Script Service</h1>
+        <p>Service is running successfully!</p>
+        <p>Use the Discord bot to generate script URLs.</p>
+    </div>
+</body>
+</html>`;
+      }
+
       return new Response(indexHtml, {
         headers: { "Content-Type": "text/html", ...corsHeaders },
       });
