@@ -8,6 +8,70 @@ import {
 } from "./utils.ts";
 import { getScript } from "./loader.ts";
 
+// Embed the HTML directly as a template literal
+const indexHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Script Service</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            color: white;
+        }
+        .container {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            padding: 40px;
+            border-radius: 15px;
+            text-align: center;
+            margin-top: 50px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        h1 {
+            font-size: 2.5em;
+            margin-bottom: 20px;
+        }
+        .feature {
+            background: rgba(255, 255, 255, 0.2);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 15px 0;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Script Service</h1>
+        <p>Secure temporary script delivery service</p>
+        
+        <div class="feature">
+            <strong>🔒 Secure Tokens</strong>
+            <p>Each script URL expires after 24 hours for enhanced security</p>
+        </div>
+        
+        <div class="feature">
+            <strong>🤖 Discord Integration</strong>
+            <p>Generate unique script URLs through our Discord bot</p>
+        </div>
+        
+        <div class="feature">
+            <strong>⚡ Fast Delivery</strong>
+            <p>Built with Deno for maximum performance and reliability</p>
+        </div>
+        
+        <p><em>Authorized users only - Use the Discord bot to access scripts</em></p>
+    </div>
+</body>
+</html>`;
+
 serve(async (req) => {
   const url = new URL(req.url);
   let kv: Deno.Kv | null = null;
@@ -21,32 +85,6 @@ serve(async (req) => {
 
     // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-      // Read index.html file directly instead of using ?raw import
-      let indexHtml: string;
-      try {
-        indexHtml = await Deno.readTextFile("./index.html");
-      } catch (error) {
-        // Fallback HTML if file not found
-        indexHtml = `<!DOCTYPE html>
-<html>
-<head>
-    <title>Script Service</title>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        .container { text-align: center; margin-top: 50px; }
-        h1 { color: #333; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Script Service</h1>
-        <p>Service is running successfully!</p>
-        <p>Use the Discord bot to generate script URLs.</p>
-    </div>
-</body>
-</html>`;
-      }
-
       return new Response(indexHtml, {
         headers: { "Content-Type": "text/html", ...corsHeaders },
       });
