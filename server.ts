@@ -8,6 +8,9 @@ import {
 } from "./utils.ts";
 import { getScript } from "./loader.ts";
 
+// Import index.html directly from repo instead of fetching from GitHub
+import indexHtml from "./index.html?raw";
+
 serve(async (req) => {
   const url = new URL(req.url);
   let kv: Deno.Kv | null = null;
@@ -21,37 +24,15 @@ serve(async (req) => {
 
     // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-      const githubUrl =
-        "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
-
-      try {
-        const res = await fetch(githubUrl);
-        if (res.ok) {
-          const html = await res.text();
-          return new Response(html, {
-            headers: { "Content-Type": "text/html", ...corsHeaders },
-          });
-        } else {
-          console.warn("GitHub fetch failed, serving fallback HTML");
-        }
-      } catch (err) {
-        console.warn("Error fetching GitHub page, serving fallback HTML", err);
-      }
-
-      // Fallback HTML if GitHub fetch fails
-      const fallbackHtml = `
-        <!DOCTYPE html>
-        <html lang="en">
-          <head><title>NapsyScript</title></head>
-          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-            <h1>Welcome to NapsyScript</h1>
-            <p><a href="https://discord.gg/YOURSERVER">Join our Discord</a></p>
-          </body>
-        </html>
-      `;
-      return new Response(fallbackHtml, {
+      // Serve local index.html
+      return new Response(indexHtml, {
         headers: { "Content-Type": "text/html", ...corsHeaders },
       });
+    }
+
+    // Optional health check route
+    if (url.pathname === "/health") {
+      return new Response("OK", { headers: corsHeaders });
     }
 
     // ---------- FETCH SCRIPT ----------
@@ -110,5 +91,7 @@ serve(async (req) => {
       { error: "Internal server error", details: err.message },
       500
     );
+  } finally {
+    kv?.close();
   }
 });
