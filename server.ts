@@ -13,19 +13,22 @@ serve(async (req) => {
   }
 
   try {
-    // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-      const html = `
-        <!DOCTYPE html>
-        <html lang="en">
-          <head><title>NapsyScript</title></head>
-          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
-            <h1>Welcome to NapsyScript</h1>
-            <p><a href="https://discord.gg/YOURSERVER">Join our Discord</a></p>
-          </body>
-        </html>`;
-      return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
+  const githubUrl = "https://raw.githubusercontent.com/YOURUSERNAME/YOURREPO/main/index.html";
+
+  try {
+    const res = await fetch(githubUrl);
+    if (!res.ok) {
+      return new Response("Failed to load page from GitHub", { status: 500 });
     }
+    const html = await res.text();
+    return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
+  } catch (err) {
+    console.error("Error fetching GitHub page:", err);
+    return new Response("Error fetching page", { status: 500 });
+  }
+}
+
 
     // ---------- FETCH SCRIPT ----------
     if (url.pathname.startsWith("/scripts/") && req.method === "GET") {
