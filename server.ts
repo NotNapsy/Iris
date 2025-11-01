@@ -14,7 +14,7 @@ serve(async (req) => {
 
   try {
     if (url.pathname === "/" && req.method === "GET") {
-  const githubUrl = "https://raw.githubusercontent.com/YOURUSERNAME/YOURREPO/main/index.html";
+  const githubUrl = "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
 
   try {
     const res = await fetch(githubUrl);
