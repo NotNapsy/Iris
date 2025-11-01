@@ -1,23 +1,57 @@
 import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
-import { generateToken, jsonResponse, corsHeaders, TOKEN_TTL_MS, ADMIN_API_KEY } from "./utils.ts";
+import {
+  generateToken,
+  jsonResponse,
+  corsHeaders,
+  TOKEN_TTL_MS,
+  ADMIN_API_KEY,
+} from "./utils.ts";
 import { getScript } from "./loader.ts";
 
 serve(async (req) => {
   const url = new URL(req.url);
-  const kv = await Deno.openKv();
-
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  let kv: Deno.Kv | null = null;
 
   try {
+    kv = await Deno.openKv();
+
+    if (req.method === "OPTIONS") {
+      return new Response(null, { headers: corsHeaders });
+    }
+
     // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-      const githubUrl = "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
-      const res = await fetch(githubUrl);
-      if (!res.ok) return new Response("Failed to load page from GitHub", { status: 500 });
-      const html = await res.text();
-      return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
+      const githubUrl =
+        "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
+
+      try {
+        const res = await fetch(githubUrl);
+        if (res.ok) {
+          const html = await res.text();
+          return new Response(html, {
+            headers: { "Content-Type": "text/html", ...corsHeaders },
+          });
+        } else {
+          console.warn("GitHub fetch failed, serving fallback HTML");
+        }
+      } catch (err) {
+        console.warn("Error fetching GitHub page, serving fallback HTML", err);
+      }
+
+      // Fallback HTML if GitHub fetch fails
+      const fallbackHtml = `
+        <!DOCTYPE html>
+        <html lang="en">
+          <head><title>NapsyScript</title></head>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+            <h1>Welcome to NapsyScript</h1>
+            <p><a href="https://discord.gg/YOURSERVER">Join our Discord</a></p>
+          </body>
+        </html>
+      `;
+      return new Response(fallbackHtml, {
+        headers: { "Content-Type": "text/html", ...corsHeaders },
+      });
     }
 
     // ---------- FETCH SCRIPT ----------
@@ -34,16 +68,20 @@ serve(async (req) => {
         return new Response("Token expired", { status: 410 });
       }
 
-      return new Response(getScript(), { headers: { "Content-Type": "text/plain", ...corsHeaders } });
+      return new Response(getScript(), {
+        headers: { "Content-Type": "text/plain", ...corsHeaders },
+      });
     }
 
     // ---------- ADMIN: PUBLISH SCRIPT ----------
     if (url.pathname === "/publishScript" && req.method === "POST") {
       const apiKey = req.headers.get("X-Admin-Api-Key");
-      if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: "Unauthorized" }, 401);
+      if (apiKey !== ADMIN_API_KEY)
+        return jsonResponse({ error: "Unauthorized" }, 401);
 
       const body = await req.json();
-      if (!body?.discord_userid) return jsonResponse({ error: "discord_userid required" }, 400);
+      if (!body?.discord_userid)
+        return jsonResponse({ error: "discord_userid required" }, 400);
 
       const token = generateToken();
       const expiresAt = Date.now() + TOKEN_TTL_MS;
@@ -67,7 +105,10 @@ serve(async (req) => {
 
     return new Response("Not found", { status: 404 });
   } catch (err) {
-    console.error("Error:", err);
-    return jsonResponse({ error: "Internal server error", details: err.message }, 500);
+    console.error("Server error:", err);
+    return jsonResponse(
+      { error: "Internal server error", details: err.message },
+      500
+    );
   }
 });
