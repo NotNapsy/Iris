@@ -1,23 +1,4 @@
-// api.ts - FIXED VERSION
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
-const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// Read ALL environment variables
-//const SCRIPT_PARTS = [
-  //  Deno.env.get("SCRIPT_PART1"),
-    //Deno.env.get("SCRIPT_PART2"), 
- //   Deno.env.get("SCRIPT_PART3"),
-//    Deno.env.get("SCRIPT_PART4"),
-   // Deno.env.get("SCRIPT_PART5"),
-  //  Deno.env.get("SCRIPT_PART6"),
-//    Deno.env.get("SCRIPT_PART7"),
- //   Deno.env.get("SCRIPT_PART8")
-//];
-
-//console.log("=== ENVIRONMENT VARIABLES ===");
-//SCRIPT_PARTS.forEach((part, index) => {
-//    console.log(`PART${index + 1}:`, part ? `${part.length} chars` : "NOT SET");
-//});
 
 const ORIGINAL_SCRIPT = `local Luna = loadstring(game:HttpGet("https://raw.githubusercontent.com/Nebula-Softworks/Luna-Interface-Suite/refs/heads/master/source.lua", true))()
 
@@ -754,141 +735,175 @@ ConfigTab:BuildConfigSection()
 
 print("Loaded")
 `  //SCRIPT_PARTS.filter(part => part).join('\n');
-
-console.log("TOTAL SCRIPT LENGTH:", ORIGINAL_SCRIPT.length);
-
-// Fallback script
-const FALLBACK_SCRIPT = `
-print("Iris Hub - Environment Variables Issue")
-print("If you see this, the environment variables are not being read properly")
-`;
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
 function getScript(): string {
-    return ORIGINAL_SCRIPT.length > 1000 ? ORIGINAL_SCRIPT : FALLBACK_SCRIPT;
+  return ORIGINAL_SCRIPT.length > 1000 ? ORIGINAL_SCRIPT : FALLBACK_SCRIPT;
 }
 
 function generateToken(length = 20): string {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const randomBytes = crypto.getRandomValues(new Uint8Array(length));
-    let token = '';
-    for (let i = 0; i < length; i++) {
-        token += chars[randomBytes[i] % chars.length];
-    }
-    return token;
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+  const randomBytes = crypto.getRandomValues(new Uint8Array(length));
+  let token = "";
+  for (let i = 0; i < length; i++) {
+    token += chars[randomBytes[i] % chars.length];
+  }
+  return token;
 }
 
+function jsonResponse(data: any, status = 200) {
+  return new Response(JSON.stringify(data, null, 2), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
+      "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
+    },
+  });
+}
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
+  "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
+};
+
 Deno.serve(async (req) => {
-    const url = new URL(req.url);
-    
-    const corsHeaders = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, X-Admin-Api-Key',
-    };
+  const url = new URL(req.url);
+  const kv = await Deno.openKv();
 
-    if (req.method === 'OPTIONS') {
-        return new Response(null, { headers: corsHeaders });
+  if (req.method === "OPTIONS") {
+    return new Response(null, { headers: corsHeaders });
+  }
+
+  try {
+    // ---------- DEBUG ----------
+    if (url.pathname === "/debug" && req.method === "GET") {
+      const debugInfo = {
+        total_length: ORIGINAL_SCRIPT.length,
+        using_fallback: ORIGINAL_SCRIPT.length <= 1000,
+        parts: SCRIPT_PARTS.map((part, index) => ({
+          name: `SCRIPT_PART${index + 1}`,
+          length: part ? part.length : 0,
+          set: !!part,
+          preview: part ? part.substring(0, 50) + "..." : "NOT SET",
+        })),
+      };
+      return jsonResponse(debugInfo);
     }
 
-    // DEBUG ENDPOINT - This will show what's happening
-    if (url.pathname === '/debug' && req.method === 'GET') {
-        const debugInfo = {
-            total_length: ORIGINAL_SCRIPT.length,
-            using_fallback: ORIGINAL_SCRIPT.length <= 1000,
-            parts: SCRIPT_PARTS.map((part, index) => ({
-                name: `SCRIPT_PART${index + 1}`,
-                length: part ? part.length : 0,
-                set: !!part,
-                preview: part ? part.substring(0, 50) + '...' : 'NOT SET'
-            }))
-        };
-        return Response.json(debugInfo, { headers: corsHeaders });
+    // ---------- LANDING PAGE ----------
+    if (url.pathname === "/" && req.method === "GET") {
+      // Replace this with your actual HTML later
+      const html = `
+        <!DOCTYPE html>
+        <html lang="en">
+          <head><title>NapsyScript</title></head>
+          <body style="font-family: sans-serif; text-align: center; padding-top: 50px;">
+            <h1>Welcome to NapsyScript</h1>
+            <p>The API is running and ready!</p>
+            <p><a href="https://discord.gg/YOURSERVER">Join our Discord</a></p>
+          </body>
+        </html>`;
+      return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
     }
 
-    const kv = await Deno.openKv();
-
-    try {
-        // POST /publishScript
-        if (url.pathname === '/publishScript' && req.method === 'POST') {
-            const apiKey = req.headers.get('X-Admin-Api-Key');
-            
-            if (!apiKey || apiKey !== ADMIN_API_KEY) {
-                return Response.json({ error: 'Unauthorized' }, { status: 401, headers: corsHeaders });
-            }
-
-            const body = await req.json();
-            
-            if (!body?.discord_userid) {
-                return Response.json({ error: 'discord_userid required' }, { status: 400, headers: corsHeaders });
-            }
-
-            const token = generateToken();
-            const expiresAt = Date.now() + TOKEN_TTL_MS;
-
-            await kv.set(["token", token], {
-                user_id: body.discord_userid,
-                expires_at: expiresAt,
-                created_at: Date.now()
-            });
-
-            const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
-            const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
-
-            return Response.json({
-                success: true,
-                script_url: scriptUrl,
-                loadstring: loadstringStr,
-                expires_at: new Date(expiresAt).toISOString(),
-            }, { headers: corsHeaders });
-        }
-
-        // GET /scripts/:token
-        if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
-            const token = url.pathname.split('/')[2];
-            
-            if (!token) {
-                return new Response('Token required', { status: 400 });
-            }
-
-            const entry = await kv.get(["token", token]);
-            
-            if (!entry.value) {
-                return new Response('Token not found', { status: 404 });
-            }
-
-            const data = entry.value as any;
-            
-            if (data.expires_at < Date.now()) {
-                await kv.delete(["token", token]);
-                return new Response('Token expired', { status: 410 });
-            }
-
-            const scriptContent = getScript();
-            return new Response(scriptContent, {
-                headers: { 'Content-Type': 'text/plain', ...corsHeaders },
-            });
-        }
-
-        // Root endpoint
-        if (url.pathname === '/' && req.method === 'GET') {
-            return Response.json({ 
-                message: 'NapsyScript API',
-                status: 'running',
-                storage: 'deno-kv-persistent',
-                script_source: 'environment-variable',
-                script_loaded: ORIGINAL_SCRIPT.length > 1000
-            }, { headers: corsHeaders });
-        }
-
-        return new Response('Not found', { status: 404 });
-
-    } catch (error) {
-        console.error('Error:', error);
-        return Response.json({ 
-            error: 'Internal server error',
-            details: error.message 
-        }, { status: 500 });
-    } finally {
-        kv.close();
+    // ---------- HEALTH CHECK ----------
+    if (url.pathname === "/health" && req.method === "GET") {
+      return jsonResponse({ status: "ok", uptime_ms: performance.now() });
     }
+
+    // ---------- INFO ----------
+    if (url.pathname === "/info" && req.method === "GET") {
+      return jsonResponse({
+        service: "NapsyScript API",
+        status: "running",
+        version: "1.1.0",
+        script_loaded: ORIGINAL_SCRIPT.length > 1000,
+        script_source: "environment-variable",
+        storage: "deno-kv-persistent",
+      });
+    }
+
+    // ---------- ADMIN: PUBLISH SCRIPT ----------
+    if (url.pathname === "/publishScript" && req.method === "POST") {
+      const apiKey = req.headers.get("X-Admin-Api-Key");
+      if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: "Unauthorized" }, 401);
+
+      const body = await req.json();
+      if (!body?.discord_userid) return jsonResponse({ error: "discord_userid required" }, 400);
+
+      const token = generateToken();
+      const expiresAt = Date.now() + TOKEN_TTL_MS;
+
+      await kv.set(["token", token], {
+        user_id: body.discord_userid,
+        expires_at: expiresAt,
+        created_at: Date.now(),
+      });
+
+      const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
+      const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
+
+      return jsonResponse({
+        success: true,
+        script_url: scriptUrl,
+        loadstring: loadstringStr,
+        expires_at: new Date(expiresAt).toISOString(),
+      });
+    }
+
+    // ---------- ADMIN: LIST TOKENS ----------
+    if (url.pathname === "/listTokens" && req.method === "GET") {
+      const apiKey = req.headers.get("X-Admin-Api-Key");
+      if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: "Unauthorized" }, 401);
+
+      const tokens: any[] = [];
+      for await (const entry of kv.list({ prefix: ["token"] })) {
+        tokens.push({ token: entry.key[1], ...entry.value });
+      }
+      return jsonResponse({ count: tokens.length, tokens });
+    }
+
+    // ---------- ADMIN: REVOKE TOKEN ----------
+    if (url.pathname.startsWith("/revoke/") && req.method === "DELETE") {
+      const apiKey = req.headers.get("X-Admin-Api-Key");
+      if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: "Unauthorized" }, 401);
+
+      const token = url.pathname.split("/")[2];
+      if (!token) return jsonResponse({ error: "Token required" }, 400);
+
+      await kv.delete(["token", token]);
+      return jsonResponse({ success: true, revoked_token: token });
+    }
+
+    // ---------- FETCH SCRIPT ----------
+    if (url.pathname.startsWith("/scripts/") && req.method === "GET") {
+      const token = url.pathname.split("/")[2];
+      if (!token) return new Response("Token required", { status: 400 });
+
+      const entry = await kv.get(["token", token]);
+      if (!entry.value) return new Response("Token not found", { status: 404 });
+
+      const data = entry.value as any;
+      if (data.expires_at < Date.now()) {
+        await kv.delete(["token", token]);
+        return new Response("Token expired", { status: 410 });
+      }
+
+      const scriptContent = getScript();
+      return new Response(scriptContent, {
+        headers: { "Content-Type": "text/plain", ...corsHeaders },
+      });
+    }
+
+    return new Response("Not found", { status: 404 });
+  } catch (err) {
+    console.error("Error:", err);
+    return jsonResponse({ error: "Internal server error", details: err.message }, 500);
+  } finally {
+    kv.close();
+  }
 });
