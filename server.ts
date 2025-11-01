@@ -2,8 +2,6 @@ import { serve } from "https://deno.land/std@0.203.0/http/server.ts";
 import { generateToken, jsonResponse, corsHeaders, TOKEN_TTL_MS, ADMIN_API_KEY } from "./utils.ts";
 import { getScript } from "./loader.ts";
 
-const SCRIPT_PARTS: string[] = []; // optional if you want to split scripts further
-
 serve(async (req) => {
   const url = new URL(req.url);
   const kv = await Deno.openKv();
@@ -13,22 +11,14 @@ serve(async (req) => {
   }
 
   try {
+    // ---------- LANDING PAGE ----------
     if (url.pathname === "/" && req.method === "GET") {
-  const githubUrl = "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
-
-  try {
-    const res = await fetch(githubUrl);
-    if (!res.ok) {
-      return new Response("Failed to load page from GitHub", { status: 500 });
+      const githubUrl = "https://raw.githubusercontent.com/NotNapsy/Iris/main/index.html";
+      const res = await fetch(githubUrl);
+      if (!res.ok) return new Response("Failed to load page from GitHub", { status: 500 });
+      const html = await res.text();
+      return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
     }
-    const html = await res.text();
-    return new Response(html, { headers: { "Content-Type": "text/html", ...corsHeaders } });
-  } catch (err) {
-    console.error("Error fetching GitHub page:", err);
-    return new Response("Error fetching page", { status: 500 });
-  }
-}
-
 
     // ---------- FETCH SCRIPT ----------
     if (url.pathname.startsWith("/scripts/") && req.method === "GET") {
@@ -79,7 +69,5 @@ serve(async (req) => {
   } catch (err) {
     console.error("Error:", err);
     return jsonResponse({ error: "Internal server error", details: err.message }, 500);
-  } finally {
-    kv.close();
   }
 });
