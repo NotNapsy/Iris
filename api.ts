@@ -1333,7 +1333,6 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   }
 
   const url = new URL(req.url);
-  const clientIP = getClientIP(req);
 
   if (req.method === 'POST') {
     try {
@@ -1383,6 +1382,36 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   }
 
   return jsonResponse({ error: 'Method not allowed' }, 405);
+}
+
+// Get user info for blacklisting
+async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const url = new URL(req.url);
+  const discordId = url.searchParams.get('discord_id');
+  
+  if (!discordId) {
+    return jsonResponse({ error: 'discord_id parameter required' }, 400);
+  }
+
+  // Find keys activated by this user
+  const userKeys = [];
+  for await (const entry of kv.list({ prefix: ["keys"] })) {
+    const keyData = entry.value;
+    if (keyData.activated && keyData.activation_data?.discord_id === discordId) {
+      userKeys.push(keyData);
+    }
+  }
+
+  return jsonResponse({ 
+    user_id: discordId,
+    activated_keys: userKeys,
+    total_activations: userKeys.length
+  });
 }
 
 // Main handler with all enhancements
@@ -1635,40 +1664,13 @@ export async function handler(req: Request): Promise<Response> {
       }
 
       // Admin blacklist management
-      if (url.pathname === '/admin/blacklist' && req.method === 'GET') {
-        return await handleAdminBlacklist(kv, req);
-      }
-
-      if (url.pathname === '/admin/blacklist' && (req.method === 'POST' || req.method === 'DELETE')) {
+      if (url.pathname === '/admin/blacklist') {
         return await handleAdminBlacklist(kv, req);
       }
 
       // Get user info for blacklisting
       if (url.pathname === '/admin/user-info' && req.method === 'GET') {
-        const apiKey = req.headers.get('X-Admin-Api-Key');
-        if (apiKey !== ADMIN_API_KEY) {
-          return jsonResponse({ error: 'Unauthorized' }, 401);
-        }
-
-        const discordId = url.searchParams.get('discord_id');
-        if (!discordId) {
-          return jsonResponse({ error: 'discord_id parameter required' }, 400);
-        }
-
-        // Find keys activated by this user
-        const userKeys = [];
-        for await (const entry of kv.list({ prefix: ["keys"] })) {
-          const keyData = entry.value;
-          if (keyData.activated && keyData.activation_data?.discord_id === discordId) {
-            userKeys.push(keyData);
-          }
-        }
-
-        return jsonResponse({ 
-          user_id: discordId,
-          activated_keys: userKeys,
-          total_activations: userKeys.length
-        });
+        return await handleAdminUserInfo(kv, req);
       }
 
       // Emergency restore endpoint
