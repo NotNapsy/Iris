@@ -1,12 +1,34 @@
-// api.ts - 24hr expiration and auto-cleanup
+// api.ts - Production ready with all enhancements
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
+
+// Rate limiting configuration
+const RATE_LIMIT = {
+  MAX_REQUESTS: 10,
+  WINDOW_MS: 60000, // 1 minute
+  MAX_WORKINK_REQUESTS: 3, // Stricter limit for key generation
+  WORKINK_WINDOW_MS: 300000 // 5 minutes
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
+};
+
+// Rate limiting storage
+const rateLimit = new Map<string, { count: number; resetTime: number; workinkCount: number; workinkReset: number }>();
+
+// System metrics
+let metrics = {
+  totalRequests: 0,
+  successfulActivations: 0,
+  failedActivations: 0,
+  expiredCleanups: 0,
+  lastCleanup: Date.now(),
+  rateLimitHits: 0,
+  errors: 0
 };
 
 // Your script content - Lunith branding
@@ -217,6 +239,15 @@ const keySiteHtml = `<!DOCTYPE html>
             margin: 15px 0;
             font-size: 13px;
         }
+        
+        .rate-limit-message {
+            background: rgba(240, 71, 71, 0.1);
+            border: 1px solid rgba(240, 71, 71, 0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 15px 0;
+            font-size: 13px;
+        }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -233,6 +264,10 @@ const keySiteHtml = `<!DOCTYPE html>
         
         <div class="expiry-notice">
             <strong>Important:</strong> Generated keys expire in 24 hours if not activated. Activated tokens are valid for 24 hours.
+        </div>
+        
+        <div id="rateLimitMessage" class="rate-limit-message hidden">
+            <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
         </div>
         
         <div id="workinkSection">
@@ -315,6 +350,9 @@ const keySiteHtml = `<!DOCTYPE html>
                         }, 2000);
                     });
                 } else {
+                    if (result.error.includes('rate limit')) {
+                        document.getElementById('rateLimitMessage').classList.remove('hidden');
+                    }
                     alert('Verification failed: ' + result.error);
                     resetButton(btn, originalText);
                 }
@@ -349,7 +387,108 @@ const keySiteHtml = `<!DOCTYPE html>
 </html>`;
 
 // HTML for api.napsy.dev remains the same
-const apiSiteHtml = `<!DOCTYPE html>...</html>`;
+const apiSiteHtml = `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Lunith API</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body { 
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .container { 
+            background: rgba(25, 25, 25, 0.95);
+            padding: 50px 40px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(10px);
+            text-align: center;
+            width: 100%;
+        }
+        
+        h1 { 
+            color: #7289da;
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            letter-spacing: -1px;
+        }
+        
+        .status { 
+            color: #43b581;
+            font-weight: 600;
+            font-size: 1.2rem;
+            margin: 25px 0;
+            padding: 12px 24px;
+            background: rgba(67, 181, 129, 0.1);
+            border-radius: 10px;
+            display: inline-block;
+        }
+        
+        .description {
+            color: #aaa;
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin: 25px 0;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
+        a {
+            color: #7289da;
+            text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s ease;
+            border-bottom: 2px solid transparent;
+            padding-bottom: 2px;
+        }
+        
+        a:hover {
+            color: #8ba1e8;
+            border-bottom-color: #7289da;
+        }
+        
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
+            margin: 30px auto;
+            width: 200px;
+        }
+    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="container">
+        <h1>Lunith</h1>
+        <div class="status">API Status: Online</div>
+        <div class="description">
+            Secure script delivery and key management system serving Lunith services.
+        </div>
+        <div class="divider"></div>
+        <p>
+            <a href="https://key.napsy.dev">Get your activation key</a>
+        </p>
+    </div>
+</body>
+</html>`;
 
 // Utility functions
 function jsonResponse(data: any, status = 200) {
@@ -387,53 +526,213 @@ function getClientIP(req: Request): string {
   return cfConnectingIP || xForwardedFor?.split(',')[0] || 'unknown';
 }
 
+// Enhanced rate limiting
+function checkRateLimit(ip: string, endpoint: string): { allowed: boolean; remaining: number } {
+  const now = Date.now();
+  let userLimit = rateLimit.get(ip);
+
+  if (!userLimit) {
+    userLimit = {
+      count: 1,
+      resetTime: now + RATE_LIMIT.WINDOW_MS,
+      workinkCount: 0,
+      workinkReset: now + RATE_LIMIT.WORKINK_WINDOW_MS
+    };
+    rateLimit.set(ip, userLimit);
+    return { allowed: true, remaining: RATE_LIMIT.MAX_REQUESTS - 1 };
+  }
+
+  // Check general rate limit
+  if (now > userLimit.resetTime) {
+    userLimit.count = 1;
+    userLimit.resetTime = now + RATE_LIMIT.WINDOW_MS;
+  } else if (userLimit.count >= RATE_LIMIT.MAX_REQUESTS) {
+    metrics.rateLimitHits++;
+    return { allowed: false, remaining: 0 };
+  } else {
+    userLimit.count++;
+  }
+
+  // Check WorkInk-specific rate limit
+  if (endpoint === '/workink') {
+    if (now > userLimit.workinkReset) {
+      userLimit.workinkCount = 1;
+      userLimit.workinkReset = now + RATE_LIMIT.WORKINK_WINDOW_MS;
+    } else if (userLimit.workinkCount >= RATE_LIMIT.MAX_WORKINK_REQUESTS) {
+      metrics.rateLimitHits++;
+      return { allowed: false, remaining: 0 };
+    } else {
+      userLimit.workinkCount++;
+    }
+  }
+
+  rateLimit.set(ip, userLimit);
+  return { allowed: true, remaining: RATE_LIMIT.MAX_REQUESTS - userLimit.count };
+}
+
+// Input validation
+function sanitizeInput(input: string): string {
+  return input.replace(/[<>]/g, '').substring(0, 100);
+}
+
+function isValidKeyFormat(key: string): boolean {
+  const keyRegex = /^[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/;
+  return keyRegex.test(key);
+}
+
+function isValidDiscordId(id: string): boolean {
+  return /^\d{17,20}$/.test(id);
+}
+
+// Error logging
+interface ErrorLog {
+  timestamp: number;
+  error: string;
+  endpoint: string;
+  ip: string;
+  userAgent: string;
+}
+
+async function logError(kv: Deno.Kv, error: string, req: Request, endpoint: string) {
+  try {
+    const errorLog: ErrorLog = {
+      timestamp: Date.now(),
+      error,
+      endpoint,
+      ip: getClientIP(req),
+      userAgent: req.headers.get('user-agent') || 'unknown'
+    };
+    await kv.set(["errors", Date.now()], errorLog);
+    metrics.errors++;
+  } catch (logError) {
+    console.error("Failed to log error:", logError);
+  }
+}
+
 // Cleanup expired keys and tokens
 async function cleanupExpired(kv: Deno.Kv) {
   const now = Date.now();
   let cleaned = 0;
 
-  // Clean up expired tokens
-  const tokenEntries = kv.list({ prefix: ["token"] });
-  for await (const entry of tokenEntries) {
-    if (entry.value && entry.value.expires_at < now) {
-      await kv.delete(entry.key);
-      cleaned++;
-    }
-  }
-
-  // Clean up expired unactivated keys (24 hours old and not activated)
-  const keyEntries = kv.list({ prefix: ["keys"] });
-  for await (const entry of keyEntries) {
-    const keyData = entry.value;
-    if (keyData && !keyData.activated) {
-      const keyAge = now - keyData.created_at;
-      if (keyAge > KEY_EXPIRY_MS) {
+  try {
+    // Clean up expired tokens
+    const tokenEntries = kv.list({ prefix: ["token"] });
+    for await (const entry of tokenEntries) {
+      if (entry.value && entry.value.expires_at < now) {
         await kv.delete(entry.key);
         cleaned++;
       }
     }
-  }
 
-  if (cleaned > 0) {
-    console.log(`Cleaned up ${cleaned} expired entries`);
+    // Clean up expired unactivated keys (24 hours old and not activated)
+    const keyEntries = kv.list({ prefix: ["keys"] });
+    for await (const entry of keyEntries) {
+      const keyData = entry.value;
+      if (keyData && !keyData.activated && keyData.expires_at < now) {
+        await kv.delete(entry.key);
+        cleaned++;
+      }
+    }
+
+    // Clean up old error logs (keep only last 1000)
+    const errorEntries = [];
+    for await (const entry of kv.list({ prefix: ["errors"] })) {
+      errorEntries.push(entry);
+    }
+    
+    if (errorEntries.length > 1000) {
+      const toDelete = errorEntries.sort((a, b) => a.key[1] - b.key[1]).slice(0, errorEntries.length - 1000);
+      for (const entry of toDelete) {
+        await kv.delete(entry.key);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      metrics.expiredCleanups += cleaned;
+      metrics.lastCleanup = now;
+      console.log(`Cleaned up ${cleaned} expired entries`);
+    }
+  } catch (error) {
+    console.error("Cleanup error:", error);
   }
 }
 
-// Main handler with expiration logic
+// Backup system
+async function backupKeys(kv: Deno.Kv) {
+  try {
+    const entries = [];
+    for await (const entry of kv.list({ prefix: [] })) {
+      entries.push({ key: entry.key, value: entry.value, versionstamp: entry.versionstamp });
+    }
+    
+    await kv.set(["backup", "latest"], {
+      timestamp: Date.now(),
+      entries: entries.slice(0, 1000), // Limit backup size
+      totalEntries: entries.length
+    });
+    
+    console.log(`Backup created with ${entries.length} entries`);
+  } catch (error) {
+    console.error("Backup failed:", error);
+  }
+}
+
+// Performance monitoring
+function monitorPerformance() {
+  const memoryUsage = Deno.memoryUsage();
+  console.log("Memory usage:", {
+    heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
+    heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
+    external: Math.round(memoryUsage.external / 1024 / 1024) + "MB"
+  });
+
+  // Log metrics every 100 requests or 5 minutes
+  if (metrics.totalRequests % 100 === 0 || Date.now() - metrics.lastCleanup > 300000) {
+    console.log("System Metrics:", JSON.stringify(metrics, null, 2));
+  }
+}
+
+// Main handler with all enhancements
+let isWarm = false;
+
 export async function handler(req: Request): Promise<Response> {
+  metrics.totalRequests++;
   const url = new URL(req.url);
   const hostname = url.hostname;
   const clientIP = getClientIP(req);
+  const userAgent = req.headers.get('user-agent') || 'unknown';
   
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
 
+  // Warm up on cold start
+  if (!isWarm) {
+    console.log("Cold start detected, warming up...");
+    isWarm = true;
+  }
+
   const kv = await Deno.openKv();
 
   try {
-    // Run cleanup on every request (efficient enough for Deno KV)
+    // Run cleanup on every request
     await cleanupExpired(kv);
+
+    // Run backup every 1000 requests
+    if (metrics.totalRequests % 1000 === 0) {
+      await backupKeys(kv);
+    }
+
+    // Check rate limiting
+    const rateLimitResult = checkRateLimit(clientIP, url.pathname);
+    if (!rateLimitResult.allowed) {
+      await logError(kv, "Rate limit exceeded", req, url.pathname);
+      return jsonResponse({ 
+        error: "Rate limit exceeded. Please try again later.",
+        remaining: rateLimitResult.remaining 
+      }, 429);
+    }
 
     // KEY.NAPSY.DEV - Key System
     if (hostname === 'key.napsy.dev') {
@@ -450,12 +749,12 @@ export async function handler(req: Request): Promise<Response> {
         const keyData = {
           key,
           created_at: Date.now(),
-          expires_at: expiresAt, // 24 hour expiry for unactivated keys
+          expires_at: expiresAt,
           activated: false,
           workink_completed: true,
           workink_data: {
             ip: clientIP,
-            user_agent: req.headers.get('user-agent') || 'unknown',
+            user_agent: userAgent,
             completed_at: Date.now()
           }
         };
@@ -474,7 +773,19 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({ 
           status: 'online', 
           service: 'key-system',
-          domain: 'key.napsy.dev'
+          domain: 'key.napsy.dev',
+          metrics,
+          rate_limit: rateLimitResult
+        });
+      }
+
+      if (url.pathname === '/metrics' && req.method === 'GET') {
+        // Simple metrics endpoint for monitoring
+        monitorPerformance();
+        return jsonResponse({
+          metrics,
+          rate_limits: Array.from(rateLimit.entries()).slice(0, 10), // Show top 10
+          timestamp: new Date().toISOString()
         });
       }
 
@@ -494,7 +805,8 @@ export async function handler(req: Request): Promise<Response> {
           status: 'online', 
           service: 'script-api',
           domain: 'api.napsy.dev',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          metrics
         });
       }
 
@@ -518,16 +830,37 @@ export async function handler(req: Request): Promise<Response> {
 
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
-        const body = await req.json();
+        let body;
+        try {
+          body = await req.json();
+        } catch (error) {
+          await logError(kv, "Invalid JSON in activation request", req, '/activate');
+          return jsonResponse({ error: "Invalid JSON" }, 400);
+        }
+
         const { key, discord_id, discord_username } = body;
         
         if (!key || !discord_id) {
           return jsonResponse({ error: 'Key and discord_id required' }, 400 );
         }
 
+        // Input validation
+        if (!isValidKeyFormat(key)) {
+          await logError(kv, "Invalid key format", req, '/activate');
+          return jsonResponse({ error: 'Invalid key format' }, 400);
+        }
+
+        if (!isValidDiscordId(discord_id)) {
+          await logError(kv, "Invalid Discord ID", req, '/activate');
+          return jsonResponse({ error: 'Invalid Discord ID' }, 400);
+        }
+
+        const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
+
         const entry = await kv.get(['keys', key]);
         
         if (!entry.value) {
+          await logError(kv, "Key not found", req, '/activate');
           return jsonResponse({ error: 'Invalid key' }, 404);
         }
 
@@ -536,10 +869,12 @@ export async function handler(req: Request): Promise<Response> {
         // Check if key expired (unactivated keys only)
         if (!keyData.activated && keyData.expires_at < Date.now()) {
           await kv.delete(['keys', key]);
+          await logError(kv, "Expired key activation attempt", req, '/activate');
           return jsonResponse({ error: 'Key has expired' }, 410);
         }
         
         if (!keyData.workink_completed) {
+          await logError(kv, "Unverified key activation attempt", req, '/activate');
           return jsonResponse({ error: 'Key not verified' }, 401);
         }
 
@@ -557,7 +892,7 @@ export async function handler(req: Request): Promise<Response> {
         // Store script token with user info
         await kv.set(['token', scriptToken], {
           user_id: discord_id,
-          username: discord_username || 'Unknown',
+          username: sanitizedUsername,
           expires_at: tokenExpiresAt,
           created_at: Date.now(),
           key: key,
@@ -570,11 +905,12 @@ export async function handler(req: Request): Promise<Response> {
         keyData.activation_data = {
           ip: keyData.workink_data.ip,
           discord_id: discord_id,
-          discord_username: discord_username || 'Unknown',
+          discord_username: sanitizedUsername,
           activated_at: Date.now()
         };
         
         await kv.set(['keys', key], keyData);
+        metrics.successfulActivations++;
 
         return jsonResponse({
           success: true,
@@ -591,12 +927,17 @@ export async function handler(req: Request): Promise<Response> {
       if (url.pathname === '/check-key' && req.method === 'GET') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
         if (apiKey !== ADMIN_API_KEY) {
+          await logError(kv, "Unauthorized key check attempt", req, '/check-key');
           return jsonResponse({ error: 'Unauthorized' }, 401);
         }
 
         const key = url.searchParams.get('key');
         if (!key) {
           return jsonResponse({ error: 'Key parameter required' }, 400);
+        }
+
+        if (!isValidKeyFormat(key)) {
+          return jsonResponse({ error: 'Invalid key format' }, 400);
         }
 
         const entry = await kv.get(['keys', key]);
@@ -616,6 +957,22 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({ key: keyData });
       }
 
+      // Emergency restore endpoint
+      if (url.pathname === '/admin/restore' && req.method === 'POST') {
+        const apiKey = req.headers.get('X-Admin-Api-Key');
+        if (apiKey !== ADMIN_API_KEY) {
+          return jsonResponse({ error: 'Unauthorized' }, 401);
+        }
+
+        try {
+          await backupKeys(kv);
+          return jsonResponse({ success: true, message: "Backup created successfully" });
+        } catch (error) {
+          await logError(kv, "Backup failed: " + error.message, req, '/admin/restore');
+          return jsonResponse({ error: "Backup failed" }, 500);
+        }
+      }
+
       return new Response("Not found", { status: 404 });
     }
 
@@ -623,9 +980,12 @@ export async function handler(req: Request): Promise<Response> {
 
   } catch (err) {
     console.error("Server error:", err);
+    await logError(kv, "Server error: " + err.message, req, url.pathname);
+    metrics.failedActivations++;
     return jsonResponse({ error: "Internal server error" }, 500);
   } finally {
     kv.close();
+    monitorPerformance();
   }
 }
 
