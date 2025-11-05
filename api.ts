@@ -1,4 +1,4 @@
-// api.ts - Fixed version with all requirements
+// api.ts - Production Ready Lunith Key System
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
@@ -37,30 +37,29 @@ let metrics = {
 interface BlacklistEntry {
   discord_id: string;
   ip: string;
-  hwid?: string; // For future use
-  vmac?: string; // For future use
+  hwid?: string;
+  vmac?: string;
   user_agent?: string;
   reason: string;
   created_at: number;
   expires_at?: number;
   created_by: string;
-  identifiers: string[]; // All tracked identifiers
+  identifiers: string[];
 }
 
 // User Session Management
-// Enhanced User Session with linked Discord IDs
 interface UserSession {
   ip: string;
   user_agent: string;
   last_active: number;
   current_key?: string;
   keys_generated: string[];
-  linked_discord_ids: string[]; // Track Discord IDs that used this session
-  privacy_agreed: boolean; // Track if user agreed to privacy policy
-  age_verified: boolean; // Track if user verified age
+  linked_discord_ids: string[];
+  privacy_agreed: boolean;
+  age_verified: boolean;
 }
 
-// Your script content - Lunith branding
+// Lunith Script Content
 const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
 
 -- Main script logic
@@ -101,12 +100,10 @@ function parseDuration(durationStr: string): number | null {
 function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any): string[] {
   const identifiers: string[] = [];
   
-  // Always track these core identifiers
   if (discordId && discordId !== 'unknown') identifiers.push(`discord:${discordId}`);
   if (ip && ip !== 'unknown') identifiers.push(`ip:${ip}`);
   if (userAgent && userAgent !== 'unknown') identifiers.push(`user_agent:${userAgent}`);
   
-  // Add HWID/VMAC when available from activated keys
   if (keyData?.activation_data?.hwid) {
     identifiers.push(`hwid:${keyData.activation_data.hwid}`);
   }
@@ -114,7 +111,6 @@ function getAllIdentifiers(discordId: string, ip: string, userAgent: string, key
     identifiers.push(`vmac:${keyData.activation_data.vmac}`);
   }
   
-  // Add session-based identifiers
   if (keyData?.workink_data?.session_id) {
     identifiers.push(`session:${keyData.workink_data.session_id}`);
   }
@@ -122,7 +118,7 @@ function getAllIdentifiers(discordId: string, ip: string, userAgent: string, key
   return identifiers;
 }
 
-// Enhanced blacklist check with admin bypass and comprehensive checking
+// Enhanced blacklist check with admin bypass
 async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAgent: string, keyData?: any): Promise<{ 
   blacklisted: boolean; 
   entry?: BlacklistEntry;
@@ -131,7 +127,7 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
   metrics.blacklistChecks++;
   
   // Admin bypass - ADD YOUR DISCORD ID HERE
-  const SUPER_ADMINS: string[] = ['YOUR_DISCORD_ID_HERE']; // Add your Discord ID
+  const SUPER_ADMINS: string[] = ['YOUR_DISCORD_ID_HERE'];
   
   if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
     return { blacklisted: false };
@@ -144,7 +140,6 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
     if (entry.value) {
       const blacklistEntry = entry.value as BlacklistEntry;
       
-      // Check if entry has expired
       if (blacklistEntry.expires_at && Date.now() > blacklistEntry.expires_at) {
         await kv.delete(["blacklist", "identifiers", identifier]);
         continue;
@@ -177,27 +172,22 @@ async function addToBlacklist(
   
   let identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
   
-  // Find and add all sessions linked to this Discord ID with error handling
   let sessionCount = 0;
   try {
     const linkedSessions = await findUserSessions(kv, discordId);
     
     for (const session of linkedSessions) {
-      // Add session IP to blacklist
       if (session.ip && session.ip !== 'unknown') {
         identifiers.push(`ip:${session.ip}`);
       }
-      // Add session identifier
       const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
       identifiers.push(`session:${sessionId}`);
       sessionCount++;
     }
   } catch (error) {
     console.error('Error processing linked sessions for blacklist:', error);
-    // Continue with blacklisting even if session lookup fails
   }
   
-  // Remove duplicates
   identifiers = [...new Set(identifiers)];
   
   const entry: BlacklistEntry = {
@@ -211,12 +201,10 @@ async function addToBlacklist(
     identifiers
   };
   
-  // Store under each identifier for quick lookup
   for (const identifier of identifiers) {
     await kv.set(["blacklist", "identifiers", identifier], entry);
   }
   
-  // Also store main entry for management
   await kv.set(["blacklist", "entries", discordId], entry);
   
   return { 
@@ -230,18 +218,15 @@ async function addToBlacklist(
 async function removeFromBlacklist(kv: Deno.Kv, discordId: string): Promise<{ success: boolean; removed: number }> {
   let removed = 0;
   
-  // Get the main entry to find all identifiers
   const mainEntry = await kv.get(["blacklist", "entries", discordId]);
   if (mainEntry.value) {
     const entry = mainEntry.value as BlacklistEntry;
     
-    // Remove all identifier entries
     for (const identifier of entry.identifiers) {
       await kv.delete(["blacklist", "identifiers", identifier]);
       removed++;
     }
     
-    // Remove main entry
     await kv.delete(["blacklist", "entries", discordId]);
     removed++;
   }
@@ -274,27 +259,16 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
   if (entry.value) {
     const session = entry.value as UserSession;
     
-    // Ensure session has all required properties
-    if (!session.linked_discord_ids) {
-      session.linked_discord_ids = [];
-    }
-    if (!session.keys_generated) {
-      session.keys_generated = [];
-    }
-    if (!session.privacy_agreed) {
-      session.privacy_agreed = false;
-    }
-    if (!session.age_verified) {
-      session.age_verified = false;
-    }
+    if (!session.linked_discord_ids) session.linked_discord_ids = [];
+    if (!session.keys_generated) session.keys_generated = [];
+    if (!session.privacy_agreed) session.privacy_agreed = false;
+    if (!session.age_verified) session.age_verified = false;
     
-    // Update last active
     session.last_active = Date.now();
     await kv.set(["sessions", sessionId], session);
     return session;
   }
   
-  // Create new session with all required properties
   const newSession: UserSession = {
     ip,
     user_agent: userAgent,
@@ -315,26 +289,18 @@ async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, new
   
   if (newKey) {
     session.current_key = newKey;
-    // Only keep current key, remove history
     session.keys_generated = [newKey];
   }
   
-  // Track Discord ID if provided and not already tracked
   if (discordId && !session.linked_discord_ids.includes(discordId)) {
     session.linked_discord_ids.push(discordId);
-    // Keep only last 1 Discord ID
     if (session.linked_discord_ids.length > 1) {
       session.linked_discord_ids = session.linked_discord_ids.slice(-1);
     }
   }
   
-  // Update privacy and age verification
-  if (privacyAgreed !== undefined) {
-    session.privacy_agreed = privacyAgreed;
-  }
-  if (ageVerified !== undefined) {
-    session.age_verified = ageVerified;
-  }
+  if (privacyAgreed !== undefined) session.privacy_agreed = privacyAgreed;
+  if (ageVerified !== undefined) session.age_verified = ageVerified;
   
   const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
   await kv.set(["sessions", sessionId], session);
@@ -347,19 +313,11 @@ async function findUserSessions(kv: Deno.Kv, discordId: string): Promise<UserSes
   
   try {
     for await (const entry of kv.list({ prefix: ["sessions"] })) {
-      // Add null/undefined check and type validation
-      if (!entry.value) {
-        console.warn('Skipping undefined session entry:', entry.key);
-        continue;
-      }
+      if (!entry.value) continue;
       
       const session = entry.value as UserSession;
       
-      // Validate session structure and ensure linked_discord_ids exists
-      if (!session.linked_discord_ids || !Array.isArray(session.linked_discord_ids)) {
-        console.warn('Session missing linked_discord_ids:', entry.key);
-        continue;
-      }
+      if (!session.linked_discord_ids || !Array.isArray(session.linked_discord_ids)) continue;
       
       if (session.linked_discord_ids.includes(discordId)) {
         sessions.push(session);
@@ -385,7 +343,6 @@ async function canRenewKey(kv: Deno.Kv, session: UserSession): Promise<{ canRene
   
   const keyData = keyEntry.value;
   
-  // Can only renew if key is expired
   if (keyData.expires_at > Date.now()) {
     return { 
       canRenew: false, 
@@ -404,348 +361,76 @@ const keySiteHtml = `<!DOCTYPE html>
     <meta charset="UTF-8">
     <title>Lunith - Key System</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; 
-            max-width: 600px; 
-            margin: 0 auto;
-            padding: 20px;
+            max-width: 600px; margin: 0 auto; padding: 20px;
             background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
-            color: #e8e8e8;
-            line-height: 1.6;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            color: #e8e8e8; line-height: 1.6; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
         }
-        
         .container { 
-            background: rgba(25, 25, 25, 0.95);
-            padding: 40px 35px;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(25, 25, 25, 0.95); padding: 40px 35px;
+            border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
-            backdrop-filter: blur(10px);
-            width: 100%;
+            backdrop-filter: blur(10px); width: 100%;
         }
-        
-        .logo {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        .logo h1 { 
-            color: #7289da;
-            font-size: 2.2rem;
-            font-weight: 700;
-            margin-bottom: 8px;
-            letter-spacing: -0.5px;
-        }
-        
-        .logo p {
-            color: #888;
-            font-size: 1.1rem;
-        }
-        
-        .section {
-            margin: 30px 0;
-        }
-        
+        .logo { text-align: center; margin-bottom: 30px; }
+        .logo h1 { color: #7289da; font-size: 2.2rem; font-weight: 700; margin-bottom: 8px; }
+        .logo p { color: #888; font-size: 1.1rem; }
+        .section { margin: 30px 0; }
         button { 
-            padding: 16px 24px;
-            margin: 20px 0 10px;
-            border: none;
-            border-radius: 12px;
-            width: 100%;
-            background: linear-gradient(135deg, #7289da 0%, #5b73c4 100%);
-            color: white;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 16px;
-            transition: all 0.2s ease;
-            position: relative;
-            overflow: hidden;
+            padding: 16px 24px; margin: 20px 0 10px; border: none; border-radius: 12px;
+            width: 100%; background: linear-gradient(135deg, #7289da 0%, #5b73c4 100%);
+            color: white; cursor: pointer; font-weight: 600; font-size: 16px;
+            transition: all 0.2s ease; position: relative; overflow: hidden;
         }
-        
-        button:hover { 
-            transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(114, 137, 218, 0.3);
-        }
-        
-        button:active {
-            transform: translateY(0);
-        }
-        
-        button:disabled { 
-            background: #444;
-            cursor: not-allowed;
-            transform: none;
-            box-shadow: none;
-        }
-        
+        button:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(114, 137, 218, 0.3); }
+        button:active { transform: translateY(0); }
+        button:disabled { background: #444; cursor: not-allowed; transform: none; box-shadow: none; }
         .key-display { 
-            background: rgba(15, 15, 15, 0.8);
-            padding: 20px;
-            border-radius: 12px;
-            margin: 20px 0;
-            font-family: 'JetBrains Mono', 'Fira Code', monospace;
-            word-break: break-all;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            font-size: 15px;
-            text-align: center;
-            font-weight: 600;
-            letter-spacing: 1px;
+            background: rgba(15, 15, 15, 0.8); padding: 20px; border-radius: 12px;
+            margin: 20px 0; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+            word-break: break-all; border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 15px; text-align: center; font-weight: 600; letter-spacing: 1px;
             color: #7289da;
         }
-        
-        .success { 
-            color: #43b581;
-            padding: 16px;
-            background: rgba(67, 181, 129, 0.1);
-            border-radius: 10px;
-            margin: 20px 0;
-            border-left: 4px solid #43b581;
-            font-weight: 500;
-        }
-        
-        .error { 
-            color: #f04747;
-            padding: 16px;
-            background: rgba(240, 71, 71, 0.1);
-            border-radius: 10px;
-            margin: 20px 0;
-            border-left: 4px solid #f04747;
-            font-weight: 500;
-        }
-        
-        .warning {
-            color: #faa61a;
-            padding: 16px;
-            background: rgba(250, 166, 26, 0.1);
-            border-radius: 10px;
-            margin: 20px 0;
-            border-left: 4px solid #faa61a;
-            font-weight: 500;
-        }
-        
-        .hidden { 
-            display: none;
-        }
-        
-        .info-text {
-            color: #aaa;
-            font-size: 14px;
-            line-height: 1.5;
-            margin: 12px 0;
-        }
-        
-        .divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
-            margin: 25px 0;
-        }
-        
-        .step {
-            display: flex;
-            align-items: center;
-            margin: 15px 0;
-            padding: 12px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 8px;
-        }
-        
-        .step-number {
-            background: #7289da;
-            color: white;
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 12px;
-            font-weight: 600;
-            margin-right: 12px;
-            flex-shrink: 0;
-        }
-        
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.5; }
-            100% { opacity: 1; }
-        }
-        
-        .loading {
-            animation: pulse 1.5s ease-in-out infinite;
-        }
-        
-        .expiry-notice {
-            background: rgba(250, 166, 26, 0.1);
-            border: 1px solid rgba(250, 166, 26, 0.3);
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin: 15px 0;
-            font-size: 13px;
-        }
-        
-        .rate-limit-message {
-            background: rgba(240, 71, 71, 0.1);
-            border: 1px solid rgba(240, 71, 71, 0.3);
-            border-radius: 8px;
-            padding: 12px 16px;
-            margin: 15px 0;
-            font-size: 13px;
-        }
-        
-        /* Privacy Policy Styles */
-        .privacy-section {
-            background: rgba(30, 30, 30, 0.8);
-            border-radius: 12px;
-            padding: 20px;
-            margin: 20px 0;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .privacy-content {
-            max-height: 200px;
-            overflow-y: auto;
-            background: rgba(15, 15, 15, 0.8);
-            padding: 15px;
-            border-radius: 8px;
-            margin: 15px 0;
-            font-size: 13px;
-            line-height: 1.4;
-        }
-        
-        .checkbox-group {
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-            margin: 20px 0;
-        }
-        
-        .checkbox-item {
-            display: flex;
-            align-items: flex-start;
-            gap: 12px;
-            padding: 12px;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 8px;
-        }
-        
-        .checkbox-item input[type="checkbox"] {
-            margin-top: 2px;
-            transform: scale(1.2);
-        }
-        
-        .checkbox-label {
-            font-size: 14px;
-            line-height: 1.4;
-        }
-        
-        .privacy-link {
-            color: #7289da;
-            text-decoration: none;
-            font-weight: 600;
-        }
-        
-        .privacy-link:hover {
-            text-decoration: underline;
-        }
-        
-        /* Enhanced Panel Styles */
-        .panel-section {
-            background: rgba(30, 30, 30, 0.8);
-            border-radius: 12px;
-            padding: 20px;
-            margin: 20px 0;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .panel-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 15px;
-        }
-        
-        .panel-title {
-            color: #7289da;
-            font-size: 1.2rem;
-            font-weight: 600;
-        }
-        
-        .key-status {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 15px;
-            margin: 15px 0;
-        }
-        
-        .status-item {
-            background: rgba(255, 255, 255, 0.05);
-            padding: 12px;
-            border-radius: 8px;
-            border-left: 4px solid #7289da;
-        }
-        
-        .status-label {
-            font-size: 0.9rem;
-            color: #888;
-            margin-bottom: 5px;
-        }
-        
-        .status-value {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #e8e8e8;
-        }
-        
-        .action-buttons {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 10px;
-            margin: 20px 0;
-        }
-        
-        .btn-secondary {
-            background: linear-gradient(135deg, #43b581 0%, #369a6d 100%) !important;
-        }
-        
-        .btn-secondary:hover {
-            background: linear-gradient(135deg, #369a6d 0%, #2d8a5c 100%) !important;
-        }
-        
-        .tab-container {
-            display: flex;
-            margin: 20px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .tab {
-            padding: 12px 20px;
-            cursor: pointer;
-            border-bottom: 3px solid transparent;
-            transition: all 0.2s ease;
-        }
-        
-        .tab.active {
-            border-bottom-color: #7289da;
-            color: #7289da;
-        }
-        
-        .tab-content {
-            display: none;
-        }
-        
-        .tab-content.active {
-            display: block;
-        }
+        .success { color: #43b581; padding: 16px; background: rgba(67, 181, 129, 0.1);
+            border-radius: 10px; margin: 20px 0; border-left: 4px solid #43b581; font-weight: 500; }
+        .error { color: #f04747; padding: 16px; background: rgba(240, 71, 71, 0.1);
+            border-radius: 10px; margin: 20px 0; border-left: 4px solid #f04747; font-weight: 500; }
+        .warning { color: #faa61a; padding: 16px; background: rgba(250, 166, 26, 0.1);
+            border-radius: 10px; margin: 20px 0; border-left: 4px solid #faa61a; font-weight: 500; }
+        .hidden { display: none; }
+        .info-text { color: #aaa; font-size: 14px; line-height: 1.5; margin: 12px 0; }
+        .divider { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%); margin: 25px 0; }
+        .step { display: flex; align-items: center; margin: 15px 0; padding: 12px; background: rgba(255,255,255,0.03); border-radius: 8px; }
+        .step-number { background: #7289da; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; margin-right: 12px; flex-shrink: 0; }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .loading { animation: pulse 1.5s ease-in-out infinite; }
+        .expiry-notice { background: rgba(250, 166, 26, 0.1); border: 1px solid rgba(250, 166, 26, 0.3); border-radius: 8px; padding: 12px 16px; margin: 15px 0; font-size: 13px; }
+        .rate-limit-message { background: rgba(240, 71, 71, 0.1); border: 1px solid rgba(240, 71, 71, 0.3); border-radius: 8px; padding: 12px 16px; margin: 15px 0; font-size: 13px; }
+        .privacy-section { background: rgba(30, 30, 30, 0.8); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .privacy-content { max-height: 200px; overflow-y: auto; background: rgba(15, 15, 15, 0.8); padding: 15px; border-radius: 8px; margin: 15px 0; font-size: 13px; line-height: 1.4; }
+        .checkbox-group { display: flex; flex-direction: column; gap: 15px; margin: 20px 0; }
+        .checkbox-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: rgba(255, 255, 255, 0.03); border-radius: 8px; }
+        .checkbox-item input[type="checkbox"] { margin-top: 2px; transform: scale(1.2); }
+        .checkbox-label { font-size: 14px; line-height: 1.4; }
+        .panel-section { background: rgba(30, 30, 30, 0.8); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .panel-title { color: #7289da; font-size: 1.2rem; font-weight: 600; }
+        .key-status { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0; }
+        .status-item { background: rgba(255, 255, 255, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #7289da; }
+        .status-label { font-size: 0.9rem; color: #888; margin-bottom: 5px; }
+        .status-value { font-size: 1.1rem; font-weight: 600; color: #e8e8e8; }
+        .action-buttons { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 20px 0; }
+        .btn-secondary { background: linear-gradient(135deg, #43b581 0%, #369a6d 100%) !important; }
+        .btn-secondary:hover { background: linear-gradient(135deg, #369a6d 0%, #2d8a5c 100%) !important; }
+        .tab-container { display: flex; margin: 20px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .tab { padding: 12px 20px; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s ease; }
+        .tab.active { border-bottom-color: #7289da; color: #7289da; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -762,7 +447,6 @@ const keySiteHtml = `<!DOCTYPE html>
             <div class="tab" onclick="switchTab('panel')">My Panel</div>
         </div>
         
-        <!-- Generate Tab -->
         <div id="generateTab" class="tab-content active">
             <div class="section">
                 <p>Generate your unique activation key to access Lunith services.</p>
@@ -776,7 +460,6 @@ const keySiteHtml = `<!DOCTYPE html>
                 <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
             </div>
             
-            <!-- Privacy Policy Section -->
             <div id="privacySection" class="privacy-section">
                 <div class="step">
                     <div class="step-number">1</div>
@@ -871,7 +554,6 @@ const keySiteHtml = `<!DOCTYPE html>
             </div>
         </div>
         
-        <!-- User Panel Tab -->
         <div id="panelTab" class="tab-content">
             <div class="panel-section">
                 <div class="panel-header">
@@ -930,83 +612,50 @@ const keySiteHtml = `<!DOCTYPE html>
     </div>
 
     <script>
-        // Tab switching
         function switchTab(tabName) {
-            // Hide all tabs
-            document.querySelectorAll('.tab-content').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            document.querySelectorAll('.tab').forEach(tab => {
-                tab.classList.remove('active');
-            });
-            
-            // Show selected tab
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
             document.getElementById(tabName + 'Tab').classList.add('active');
             event.target.classList.add('active');
-            
-            // Load panel data if switching to panel
-            if (tabName === 'panel') {
-                loadUserPanel();
-            }
+            if (tabName === 'panel') loadUserPanel();
         }
         
-        // Privacy policy checkbox validation
         function setupPrivacyCheckboxes() {
             const privacyCheckbox = document.getElementById('privacyAgree');
             const ageCheckbox = document.getElementById('ageVerify');
             const privacyBtn = document.getElementById('privacyBtn');
-            
             function validateCheckboxes() {
                 privacyBtn.disabled = !(privacyCheckbox.checked && ageCheckbox.checked);
             }
-            
             privacyCheckbox.addEventListener('change', validateCheckboxes);
             ageCheckbox.addEventListener('change', validateCheckboxes);
         }
         
-        // Verify privacy policy and age
         function verifyPrivacy() {
-            const privacySection = document.getElementById('privacySection');
-            const workinkSection = document.getElementById('workinkSection');
-            
-            privacySection.classList.add('hidden');
-            workinkSection.classList.remove('hidden');
-            
-            // Store privacy agreement in session
+            document.getElementById('privacySection').classList.add('hidden');
+            document.getElementById('workinkSection').classList.remove('hidden');
             localStorage.setItem('privacyAgreed', 'true');
             localStorage.setItem('ageVerified', 'true');
         }
         
-        // Load user panel data
         async function loadUserPanel() {
             try {
                 const response = await fetch('/user-panel');
                 const result = await response.json();
-                
                 if (result.success) {
-                    // Update session info
                     document.getElementById('panelIp').textContent = result.session.ip;
-                    
-                    // Update current key info
                     if (result.current_key) {
                         const keyExpiry = new Date(result.current_key.expires_at);
                         const now = new Date();
                         const isExpired = keyExpiry < now;
-                        
                         document.getElementById('panelCurrentKey').textContent = result.current_key.key;
-                        document.getElementById('keyStatus').textContent = 
-                            result.current_key.activated ? 'Activated' : 'Not Activated';
-                        document.getElementById('keyExpiry').textContent = isExpired ? 
-                            'EXPIRED' : keyExpiry.toLocaleString();
+                        document.getElementById('keyStatus').textContent = result.current_key.activated ? 'Activated' : 'Not Activated';
+                        document.getElementById('keyExpiry').textContent = isExpired ? 'EXPIRED' : keyExpiry.toLocaleString();
                         document.getElementById('panelKeyStatus').textContent = isExpired ? 'Expired' : 'Active';
                         document.getElementById('currentKeyInfo').classList.remove('hidden');
                         document.getElementById('noKeyInfo').classList.add('hidden');
-                        
-                        // Enable/disable renew button based on expiry
                         document.getElementById('renewBtn').disabled = !isExpired;
-                        if (!isExpired) {
-                            document.getElementById('renewBtn').textContent = 'Key Still Valid';
-                        }
+                        if (!isExpired) document.getElementById('renewBtn').textContent = 'Key Still Valid';
                     } else {
                         document.getElementById('currentKeyInfo').classList.add('hidden');
                         document.getElementById('noKeyInfo').classList.remove('hidden');
@@ -1018,59 +667,45 @@ const keySiteHtml = `<!DOCTYPE html>
             }
         }
         
-        // Renew key function
-       async function renewKey() {
-  const btn = document.getElementById('renewBtn');
-  const originalText = btn.textContent;
-  
-  btn.disabled = true;
-  btn.textContent = 'Renewing...';
-  
-  try {
-    const response = await fetch('/renew', { method: 'POST' });
-    const result = await response.json();
-    
-    if (result.success) {
-      // Update UI with renewed key info (same key)
-      const newExpiry = new Date(result.expires_at);
-      document.getElementById('keyExpiry').textContent = newExpiry.toLocaleString();
-      document.getElementById('panelKeyStatus').textContent = 'Active';
-      
-      // Show renewal count if available
-      if (result.renewal_count) {
-        document.getElementById('keyStatus').textContent = 
-          `Activated • Renewed ${result.renewal_count} times`;
-      }
-      
-      // Auto-copy the same key
-      navigator.clipboard.writeText(result.key).then(() => {
-        btn.textContent = '✓ Renewed & Copied';
-        setTimeout(() => {
-          btn.textContent = 'Renew Key';
-          btn.disabled = true; // Disable until expired again
-        }, 2000);
-      });
-    } else {
-      alert('Renew failed: ' + result.error);
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
-  } catch (error) {
-    alert('Network error: ' + error.message);
-    btn.disabled = false;
-    btn.textContent = originalText;
-  }
-}
-        
-        // Copy panel key
-        function copyPanelKey() {
-            const key = document.getElementById('panelCurrentKey').textContent;
-            navigator.clipboard.writeText(key).then(() => {
-                alert('Key copied to clipboard!');
-            });
+        async function renewKey() {
+            const btn = document.getElementById('renewBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Renewing...';
+            try {
+                const response = await fetch('/renew', { method: 'POST' });
+                const result = await response.json();
+                if (result.success) {
+                    const newExpiry = new Date(result.expires_at);
+                    document.getElementById('keyExpiry').textContent = newExpiry.toLocaleString();
+                    document.getElementById('panelKeyStatus').textContent = 'Active';
+                    if (result.renewal_count) {
+                        document.getElementById('keyStatus').textContent = 'Activated • Renewed ' + result.renewal_count + ' times';
+                    }
+                    navigator.clipboard.writeText(result.key).then(() => {
+                        btn.textContent = '✓ Renewed & Copied';
+                        setTimeout(() => {
+                            btn.textContent = 'Renew Key';
+                            btn.disabled = true;
+                        }, 2000);
+                    });
+                } else {
+                    alert('Renew failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         }
         
-        // Original functions
+        function copyPanelKey() {
+            const key = document.getElementById('panelCurrentKey').textContent;
+            navigator.clipboard.writeText(key).then(() => alert('Key copied to clipboard!'));
+        }
+        
         function updateExpiryTime() {
             const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
             document.getElementById('expiryTime').textContent = expiryTime.toLocaleString();
@@ -1079,31 +714,21 @@ const keySiteHtml = `<!DOCTYPE html>
         async function startWorkInk() {
             const btn = document.getElementById('workinkBtn');
             const originalText = btn.textContent;
-            
             btn.disabled = true;
             btn.textContent = 'Processing Verification...';
             btn.classList.add('loading');
-            
             try {
                 const response = await fetch('/workink', { 
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({
-                        privacy_agreed: true,
-                        age_verified: true
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ privacy_agreed: true, age_verified: true })
                 });
                 const result = await response.json();
-                
                 if (result.success) {
                     document.getElementById('workinkSection').classList.add('hidden');
                     document.getElementById('keySection').classList.remove('hidden');
                     document.getElementById('generatedKey').textContent = result.key;
                     updateExpiryTime();
-                    
-                    // Auto-copy to clipboard
                     navigator.clipboard.writeText(result.key).then(() => {
                         document.getElementById('copyBtn').textContent = '✓ Copied Successfully';
                         setTimeout(() => {
@@ -1132,11 +757,9 @@ const keySiteHtml = `<!DOCTYPE html>
         function copyKey() {
             const key = document.getElementById('generatedKey').textContent;
             const btn = document.getElementById('copyBtn');
-            
             navigator.clipboard.writeText(key).then(() => {
                 btn.textContent = '✓ Copied Successfully';
                 btn.style.background = 'linear-gradient(135deg, #43b581 0%, #369a6d 100%)';
-                
                 setTimeout(() => {
                     btn.textContent = 'Copy Key to Clipboard';
                     btn.style.background = 'linear-gradient(135deg, #7289da 0%, #5b73c4 100%)';
@@ -1144,14 +767,10 @@ const keySiteHtml = `<!DOCTYPE html>
             });
         }
         
-        // Initialize privacy checkboxes
         document.addEventListener('DOMContentLoaded', function() {
             setupPrivacyCheckboxes();
-            
-            // Check if user already agreed to privacy policy
             const privacyAgreed = localStorage.getItem('privacyAgreed');
             const ageVerified = localStorage.getItem('ageVerified');
-            
             if (privacyAgreed === 'true' && ageVerified === 'true') {
                 document.getElementById('privacySection').classList.add('hidden');
                 document.getElementById('workinkSection').classList.remove('hidden');
@@ -1161,92 +780,38 @@ const keySiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// API site HTML remains the same
+// API site HTML
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Lunith API</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
             font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
+            max-width: 800px; margin: 0 auto; padding: 40px 20px;
             background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
-            color: #e8e8e8;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            color: #e8e8e8; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
         }
-        
         .container { 
-            background: rgba(25, 25, 25, 0.95);
-            padding: 50px 40px;
-            border-radius: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(25, 25, 25, 0.95); padding: 50px 40px;
+            border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.1);
             box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(10px);
-            text-align: center;
-            width: 100%;
+            backdrop-filter: blur(10px); text-align: center; width: 100%;
         }
-        
-        h1 { 
-            color: #7289da;
-            font-size: 3rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            letter-spacing: -1px;
-        }
-        
+        h1 { color: #7289da; font-size: 3rem; font-weight: 700; margin-bottom: 16px; }
         .status { 
-            color: #43b581;
-            font-weight: 600;
-            font-size: 1.2rem;
-            margin: 25px 0;
-            padding: 12px 24px;
-            background: rgba(67, 181, 129, 0.1);
-            border-radius: 10px;
+            color: #43b581; font-weight: 600; font-size: 1.2rem;
+            margin: 25px 0; padding: 12px 24px;
+            background: rgba(67, 181, 129, 0.1); border-radius: 10px;
             display: inline-block;
         }
-        
-        .description {
-            color: #aaa;
-            font-size: 1.1rem;
-            line-height: 1.6;
-            margin: 25px 0;
-            max-width: 500px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        a {
-            color: #7289da;
-            text-decoration: none;
-            font-weight: 600;
-            transition: color 0.2s ease;
-            border-bottom: 2px solid transparent;
-            padding-bottom: 2px;
-        }
-        
-        a:hover {
-            color: #8ba1e8;
-            border-bottom-color: #7289da;
-        }
-        
-        .divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
-            margin: 30px auto;
-            width: 200px;
-        }
+        .description { color: #aaa; font-size: 1.1rem; line-height: 1.6; margin: 25px 0; max-width: 500px; margin-left: auto; margin-right: auto; }
+        a { color: #7289da; text-decoration: none; font-weight: 600; transition: color 0.2s ease; border-bottom: 2px solid transparent; padding-bottom: 2px; }
+        a:hover { color: #8ba1e8; border-bottom-color: #7289da; }
+        .divider { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%); margin: 30px auto; width: 200px; }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -1258,9 +823,7 @@ const apiSiteHtml = `<!DOCTYPE html>
             Secure script delivery and key management system serving Lunith services.
         </div>
         <div class="divider"></div>
-        <p>
-            <a href="https://key.napsy.dev">Get your activation key</a>
-        </p>
+        <p><a href="https://key.napsy.dev">Get your activation key</a></p>
     </div>
 </body>
 </html>`;
@@ -1269,10 +832,7 @@ const apiSiteHtml = `<!DOCTYPE html>
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders,
-    },
+    headers: { "Content-Type": "application/json", ...corsHeaders },
   });
 }
 
@@ -1307,17 +867,11 @@ function checkRateLimit(ip: string, endpoint: string): { allowed: boolean; remai
   let userLimit = rateLimit.get(ip);
 
   if (!userLimit) {
-    userLimit = {
-      count: 1,
-      resetTime: now + RATE_LIMIT.WINDOW_MS,
-      workinkCount: 0,
-      workinkReset: now + RATE_LIMIT.WORKINK_WINDOW_MS
-    };
+    userLimit = { count: 1, resetTime: now + RATE_LIMIT.WINDOW_MS, workinkCount: 0, workinkReset: now + RATE_LIMIT.WORKINK_WINDOW_MS };
     rateLimit.set(ip, userLimit);
     return { allowed: true, remaining: RATE_LIMIT.MAX_REQUESTS - 1 };
   }
 
-  // Check general rate limit
   if (now > userLimit.resetTime) {
     userLimit.count = 1;
     userLimit.resetTime = now + RATE_LIMIT.WINDOW_MS;
@@ -1328,7 +882,6 @@ function checkRateLimit(ip: string, endpoint: string): { allowed: boolean; remai
     userLimit.count++;
   }
 
-  // Check WorkInk-specific rate limit
   if (endpoint === '/workink') {
     if (now > userLimit.workinkReset) {
       userLimit.workinkCount = 1;
@@ -1371,11 +924,8 @@ interface ErrorLog {
 async function logError(kv: Deno.Kv, error: string, req: Request, endpoint: string) {
   try {
     const errorLog: ErrorLog = {
-      timestamp: Date.now(),
-      error,
-      endpoint,
-      ip: getClientIP(req),
-      userAgent: req.headers.get('user-agent') || 'unknown'
+      timestamp: Date.now(), error, endpoint,
+      ip: getClientIP(req), userAgent: req.headers.get('user-agent') || 'unknown'
     };
     await kv.set(["errors", Date.now()], errorLog);
     metrics.errors++;
@@ -1399,7 +949,7 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
-    // Clean up expired unactivated keys (24 hours old and not activated)
+    // Clean up expired unactivated keys
     const keyEntries = kv.list({ prefix: ["keys"] });
     for await (const entry of keyEntries) {
       const keyData = entry.value;
@@ -1419,7 +969,7 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
-    // Clean up old error logs (keep only last 1000)
+    // Clean up old error logs
     const errorEntries = [];
     for await (const entry of kv.list({ prefix: ["errors"] })) {
       errorEntries.push(entry);
@@ -1452,9 +1002,7 @@ async function backupKeys(kv: Deno.Kv) {
     }
     
     await kv.set(["backup", "latest"], {
-      timestamp: Date.now(),
-      entries: entries.slice(0, 1000), // Limit backup size
-      totalEntries: entries.length
+      timestamp: Date.now(), entries: entries.slice(0, 1000), totalEntries: entries.length
     });
     
     console.log(`Backup created with ${entries.length} entries`);
@@ -1472,61 +1020,49 @@ function monitorPerformance() {
     external: Math.round(memoryUsage.external / 1024 / 1024) + "MB"
   });
 
-  // Log metrics every 100 requests or 5 minutes
   if (metrics.totalRequests % 100 === 0 || Date.now() - metrics.lastCleanup > 300000) {
     console.log("System Metrics:", JSON.stringify(metrics, null, 2));
   }
 }
 
-// Enhanced WorkInk endpoint with session tracking, blacklist checks, and privacy verification
+// Enhanced WorkInk endpoint
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
-  // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
     await logError(kv, `Blacklisted connection attempted key generation: ${clientIP}`, req, '/workink');
     return jsonResponse({ 
       error: "Access denied. Your connection is blacklisted.",
-      reason: blacklistCheck.entry?.reason,
-      matched_identifier: blacklistCheck.matchedIdentifier
+      reason: blacklistCheck.entry?.reason, matched_identifier: blacklistCheck.matchedIdentifier
     }, 403);
   }
   
   const session = await getUserSession(kv, clientIP, userAgent);
   
-  // Check if user has agreed to privacy policy and age verification
   let body;
-  try {
-    body = await req.json();
-  } catch (error) {
+  try { body = await req.json(); } catch (error) {
     return jsonResponse({ error: "Invalid JSON in request body" }, 400);
   }
 
   const { privacy_agreed, age_verified } = body;
   
   if (!privacy_agreed || !age_verified) {
-    return jsonResponse({ 
-      error: "You must agree to the privacy policy and age verification to generate a key." 
-    }, 403);
+    return jsonResponse({ error: "You must agree to the privacy policy and age verification to generate a key." }, 403);
   }
   
-  // Update session with privacy agreement
   await updateUserSession(kv, clientIP, userAgent, undefined, undefined, true, true);
   
-  // If session has previous keys, check if any were activated by blacklisted users
   if (session.keys_generated.length > 0) {
     for (const key of session.keys_generated) {
       const keyEntry = await kv.get(["keys", key]);
       if (keyEntry.value && keyEntry.value.activated) {
         const discordId = keyEntry.value.activation_data?.discord_id;
         if (discordId) {
-          // Check if this Discord ID is blacklisted
           const userBlacklistCheck = await isBlacklisted(kv, discordId, 'unknown', 'unknown');
           if (userBlacklistCheck.blacklisted) {
             await logError(kv, `Session with blacklisted user attempted key generation: ${discordId}`, req, '/workink');
             return jsonResponse({ 
               error: "Access denied. Your session is linked to a blacklisted account.",
-              reason: userBlacklistCheck.entry?.reason,
-              linked_user: discordId
+              reason: userBlacklistCheck.entry?.reason, linked_user: discordId
             }, 403);
           }
         }
@@ -1534,14 +1070,12 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
     }
   }
   
-  // Check if user already has a valid key
   if (session.current_key) {
     const keyEntry = await kv.get(["keys", session.current_key]);
     if (keyEntry.value && keyEntry.value.expires_at > Date.now()) {
       return jsonResponse({ 
         error: "You already have an active key. Please wait until it expires to generate a new one.",
-        current_key: session.current_key,
-        expires_at: keyEntry.value.expires_at
+        current_key: session.current_key, expires_at: keyEntry.value.expires_at
       }, 409);
     }
   }
@@ -1550,59 +1084,37 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
   const expiresAt = Date.now() + KEY_EXPIRY_MS;
   
   const keyData = {
-    key,
-    created_at: Date.now(),
-    expires_at: expiresAt,
-    activated: false,
-    workink_completed: true,
-    workink_data: {
-      ip: clientIP,
-      user_agent: userAgent,
-      completed_at: Date.now(),
+    key, created_at: Date.now(), expires_at: expiresAt, activated: false, workink_completed: true,
+    workink_data: { ip: clientIP, user_agent: userAgent, completed_at: Date.now(),
       session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
-      privacy_agreed: true,
-      age_verified: true
-    }
+      privacy_agreed: true, age_verified: true }
   };
   
   await kv.set(["keys", key], keyData);
   await updateUserSession(kv, clientIP, userAgent, key);
   
   return jsonResponse({
-    success: true,
-    key: key,
-    expires_at: new Date(expiresAt).toISOString(),
-    existing_session: session.keys_generated.length > 0,
-    message: "Verification completed successfully"
+    success: true, key: key, expires_at: new Date(expiresAt).toISOString(),
+    existing_session: session.keys_generated.length > 0, message: "Verification completed successfully"
   });
 }
 
-// Renew key system - only allow renewal when current key is expired
+// Renew key system - reset expiration dates for existing key
 async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
-  // Check blacklist first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
-    return jsonResponse({ 
-      error: "Access denied. Your connection is blacklisted.",
-      reason: blacklistCheck.entry?.reason 
-    }, 403);
+    return jsonResponse({ error: "Access denied. Your connection is blacklisted.", reason: blacklistCheck.entry?.reason }, 403);
   }
   
   const session = await getUserSession(kv, clientIP, userAgent);
   
   if (!session.current_key) {
-    return jsonResponse({ 
-      error: "No existing key found. Please generate a new key first." 
-    }, 400);
+    return jsonResponse({ error: "No existing key found. Please generate a new key first." }, 400);
   }
   
-  // Check if current key can be renewed (must be expired)
   const renewCheck = await canRenewKey(kv, session);
   if (!renewCheck.canRenew) {
-    return jsonResponse({ 
-      error: renewCheck.reason || "Cannot renew key at this time.",
-      current_key: session.current_key
-    }, 400);
+    return jsonResponse({ error: renewCheck.reason || "Cannot renew key at this time.", current_key: session.current_key }, 400);
   }
   
   const currentKey = session.current_key;
@@ -1610,9 +1122,7 @@ async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req
   const keyData = keyEntry.value;
   
   if (!keyData) {
-    return jsonResponse({ 
-      error: "Key data not found. Please generate a new key." 
-    }, 404);
+    return jsonResponse({ error: "Key data not found. Please generate a new key." }, 404);
   }
   
   // Reset expiration dates
@@ -1622,15 +1132,12 @@ async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req
   // If key was activated, also reset the token expiration
   if (keyData.activated && keyData.script_token) {
     const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-    
-    // Update token expiration
     const tokenEntry = await kv.get(["token", keyData.script_token]);
     if (tokenEntry.value) {
       const tokenData = tokenEntry.value;
       tokenData.expires_at = tokenExpiresAt;
       await kv.set(["token", keyData.script_token], tokenData);
     }
-    
     keyData.activation_data.token_reset_at = Date.now();
     keyData.activation_data.new_token_expires_at = tokenExpiresAt;
   }
@@ -1638,57 +1145,14 @@ async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req
   // Update key data with renewal info
   keyData.renewed_at = Date.now();
   keyData.renewal_count = (keyData.renewal_count || 0) + 1;
-  keyData.workink_data.last_renewal = {
-    ip: clientIP,
-    user_agent: userAgent,
-    renewed_at: Date.now()
-  };
+  keyData.workink_data.last_renewal = { ip: clientIP, user_agent: userAgent, renewed_at: Date.now() };
   
   await kv.set(["keys", currentKey], keyData);
   metrics.refills++;
   
   return jsonResponse({
-    success: true,
-    key: currentKey, // Same key, not a new one
-    expires_at: new Date(newExpiresAt).toISOString(),
-    is_renewal: true,
-    renewal_count: keyData.renewal_count,
-    message: "Key renewed successfully - expiration reset to 24 hours"
-  });
-}
-
-// Update the user panel to show renewal info
-async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string) {
-  const session = await getUserSession(kv, clientIP, userAgent);
-  const currentKey = session.current_key;
-  
-  let keyInfo = null;
-  if (currentKey) {
-    const keyEntry = await kv.get(["keys", currentKey]);
-    if (keyEntry.value) {
-      keyInfo = keyEntry.value;
-    }
-  }
-  
-  return jsonResponse({
-    success: true,
-    session: {
-      ip: session.ip,
-      keys_generated: session.keys_generated.length,
-      last_active: session.last_active,
-      current_key: session.current_key,
-      privacy_agreed: session.privacy_agreed,
-      age_verified: session.age_verified
-    },
-    current_key: keyInfo ? {
-      key: keyInfo.key,
-      activated: keyInfo.activated,
-      created_at: keyInfo.created_at,
-      expires_at: keyInfo.expires_at,
-      renewed_at: keyInfo.renewed_at,
-      renewal_count: keyInfo.renewal_count || 0
-    } : null,
-    can_renew: keyInfo ? keyInfo.expires_at < Date.now() : false
+    success: true, key: currentKey, expires_at: new Date(newExpiresAt).toISOString(),
+    is_renewal: true, renewal_count: keyData.renewal_count, message: "Key renewed successfully - expiration reset to 24 hours"
   });
 }
 
@@ -1700,27 +1164,15 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
   let keyInfo = null;
   if (currentKey) {
     const keyEntry = await kv.get(["keys", currentKey]);
-    if (keyEntry.value) {
-      keyInfo = keyEntry.value;
-    }
+    if (keyEntry.value) keyInfo = keyEntry.value;
   }
   
   return jsonResponse({
     success: true,
-    session: {
-      ip: session.ip,
-      keys_generated: session.keys_generated.length,
-      last_active: session.last_active,
-      current_key: session.current_key,
-      privacy_agreed: session.privacy_agreed,
-      age_verified: session.age_verified
-    },
-    current_key: keyInfo ? {
-      key: keyInfo.key,
-      activated: keyInfo.activated,
-      created_at: keyInfo.created_at,
-      expires_at: keyInfo.expires_at
-    } : null,
+    session: { ip: session.ip, keys_generated: session.keys_generated.length, last_active: session.last_active,
+      current_key: session.current_key, privacy_agreed: session.privacy_agreed, age_verified: session.age_verified },
+    current_key: keyInfo ? { key: keyInfo.key, activated: keyInfo.activated, created_at: keyInfo.created_at,
+      expires_at: keyInfo.expires_at, renewed_at: keyInfo.renewed_at, renewal_count: keyInfo.renewal_count || 0 } : null,
     can_renew: keyInfo ? keyInfo.expires_at < Date.now() : false
   });
 }
@@ -1728,38 +1180,24 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
 // Admin endpoints for blacklist management
 async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
-  if (apiKey !== ADMIN_API_KEY) {
-    return jsonResponse({ error: 'Unauthorized' }, 401);
-  }
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
 
   const url = new URL(req.url);
 
   if (req.method === 'POST') {
     let body;
-    try {
-      body = await req.json();
-    } catch (error) {
+    try { body = await req.json(); } catch (error) {
       return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
     }
 
     const { discord_id, reason, created_by, duration_ms, user_data } = body;
-    
     if (!discord_id || !reason || !created_by) {
       return jsonResponse({ error: 'Missing required fields: discord_id, reason, created_by' }, 400);
     }
 
     try {
-      const result = await addToBlacklist(
-        kv, 
-        discord_id, 
-        user_data?.ip || 'unknown', 
-        user_data?.user_agent || 'unknown',
-        reason, 
-        created_by, 
-        duration_ms,
-        user_data
-      );
-
+      const result = await addToBlacklist(kv, discord_id, user_data?.ip || 'unknown', 
+        user_data?.user_agent || 'unknown', reason, created_by, duration_ms, user_data);
       return jsonResponse(result);
     } catch (error) {
       console.error('Blacklist creation error:', error);
@@ -1769,10 +1207,7 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
 
   if (req.method === 'DELETE') {
     const discordId = url.searchParams.get('discord_id');
-    if (!discordId) {
-      return jsonResponse({ error: 'discord_id parameter required' }, 400);
-    }
-
+    if (!discordId) return jsonResponse({ error: 'discord_id parameter required' }, 400);
     try {
       const result = await removeFromBlacklist(kv, discordId);
       return jsonResponse(result);
@@ -1804,18 +1239,12 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
 // Get user info for blacklisting
 async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
-  if (apiKey !== ADMIN_API_KEY) {
-    return jsonResponse({ error: 'Unauthorized' }, 401);
-  }
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
 
   const url = new URL(req.url);
   const discordId = url.searchParams.get('discord_id');
-  
-  if (!discordId) {
-    return jsonResponse({ error: 'discord_id parameter required' }, 400);
-  }
+  if (!discordId) return jsonResponse({ error: 'discord_id parameter required' }, 400);
 
-  // Find keys activated by this user
   const userKeys = [];
   for await (const entry of kv.list({ prefix: ["keys"] })) {
     const keyData = entry.value;
@@ -1824,14 +1253,8 @@ async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
     }
   }
 
-  // Return success even if no keys found, just with empty data
-  return jsonResponse({ 
-    success: true,
-    user_id: discordId,
-    activated_keys: userKeys,
-    total_activations: userKeys.length,
-    found: userKeys.length > 0
-  });
+  return jsonResponse({ success: true, user_id: discordId, activated_keys: userKeys,
+    total_activations: userKeys.length, found: userKeys.length > 0 });
 }
 
 // Main handler with all enhancements
@@ -1844,11 +1267,8 @@ export async function handler(req: Request): Promise<Response> {
   const clientIP = getClientIP(req);
   const userAgent = req.headers.get('user-agent') || 'unknown';
   
-  if (req.method === "OPTIONS") {
-    return new Response(null, { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  // Warm up on cold start
   if (!isWarm) {
     console.log("Cold start detected, warming up...");
     isWarm = true;
@@ -1857,242 +1277,143 @@ export async function handler(req: Request): Promise<Response> {
   const kv = await Deno.openKv();
 
   try {
-    // Run cleanup on every request
     await cleanupExpired(kv);
 
-    // Run backup every 1000 requests
-    if (metrics.totalRequests % 1000 === 0) {
-      await backupKeys(kv);
-    }
+    if (metrics.totalRequests % 1000 === 0) await backupKeys(kv);
 
-    // Check rate limiting
     const rateLimitResult = checkRateLimit(clientIP, url.pathname);
     if (!rateLimitResult.allowed) {
       await logError(kv, "Rate limit exceeded", req, url.pathname);
-      return jsonResponse({ 
-        error: "Rate limit exceeded. Please try again later.",
-        remaining: rateLimitResult.remaining 
-      }, 429);
+      return jsonResponse({ error: "Rate limit exceeded. Please try again later.", remaining: rateLimitResult.remaining }, 429);
     }
 
     // KEY.NAPSY.DEV - Key System
     if (hostname === 'key.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
-        return new Response(keySiteHtml, { 
-          headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } 
-        });
+        return new Response(keySiteHtml, { headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } });
       }
-
-      if (url.pathname === '/workink' && req.method === 'POST') {
-        return await handleWorkInk(kv, clientIP, userAgent, req);
-      }
-
-      if (url.pathname === '/renew' && req.method === 'POST') {
-        return await handleRenew(kv, clientIP, userAgent, req);
-      }
-
-      if (url.pathname === '/user-panel' && req.method === 'GET') {
-        return await handleUserPanel(kv, clientIP, userAgent);
-      }
-
-      if (url.pathname === '/health' && req.method === 'GET') {
-        return jsonResponse({ 
-          status: 'online', 
-          service: 'key-system',
-          domain: 'key.napsy.dev',
-          metrics,
-          rate_limit: rateLimitResult
-        });
-      }
-
+      if (url.pathname === '/workink' && req.method === 'POST') return await handleWorkInk(kv, clientIP, userAgent, req);
+      if (url.pathname === '/renew' && req.method === 'POST') return await handleRenew(kv, clientIP, userAgent, req);
+      if (url.pathname === '/user-panel' && req.method === 'GET') return await handleUserPanel(kv, clientIP, userAgent);
+      if (url.pathname === '/health' && req.method === 'GET') return jsonResponse({ status: 'online', service: 'key-system', domain: 'key.napsy.dev', metrics, rate_limit: rateLimitResult });
       if (url.pathname === '/metrics' && req.method === 'GET') {
-        // Simple metrics endpoint for monitoring
         monitorPerformance();
-        return jsonResponse({
-          metrics,
-          rate_limits: Array.from(rateLimit.entries()).slice(0, 10), // Show top 10
-          timestamp: new Date().toISOString()
-        });
+        return jsonResponse({ metrics, rate_limits: Array.from(rateLimit.entries()).slice(0, 10), timestamp: new Date().toISOString() });
       }
-
       return new Response("Not found", { status: 404 });
     }
 
     // API.NAPSY.DEV - Script API
     if (hostname === 'api.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
-        return new Response(apiSiteHtml, {
-          headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders },
-        });
+        return new Response(apiSiteHtml, { headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders } });
       }
-
-      if (url.pathname === '/health' && req.method === 'GET') {
-        return jsonResponse({ 
-          status: 'online', 
-          service: 'script-api',
-          domain: 'api.napsy.dev',
-          timestamp: new Date().toISOString(),
-          metrics
-        });
-      }
-
+      if (url.pathname === '/health' && req.method === 'GET') return jsonResponse({ status: 'online', service: 'script-api', domain: 'api.napsy.dev', timestamp: new Date().toISOString(), metrics });
       if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
         const token = url.pathname.split('/')[2];
         if (!token) return new Response("Token required", { status: 400 });
-
         const data = await kv.get(["token", token]);
-        
         if (!data.value) return new Response("Token not found", { status: 404 });
-        
         if (data.value.expires_at < Date.now()) {
           await kv.delete(["token", token]);
           return new Response("Token expired", { status: 410 });
         }
-
-        return new Response(SCRIPT_CONTENT, {
-          headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
-        });
+        return new Response(SCRIPT_CONTENT, { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders } });
       }
 
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
         let body;
-        try {
-          body = await req.json();
-        } catch (error) {
+        try { body = await req.json(); } catch (error) {
           await logError(kv, "Invalid JSON in activation request", req, '/activate');
           return jsonResponse({ error: "Invalid JSON" }, 400);
         }
 
         const { key, discord_id, discord_username } = body;
-        
-        if (!key || !discord_id) {
-          return jsonResponse({ error: 'Key and discord_id required' }, 400 );
-        }
-
-        // Input validation
+        if (!key || !discord_id) return jsonResponse({ error: 'Key and discord_id required' }, 400);
         if (!isValidKeyFormat(key)) {
           await logError(kv, "Invalid key format", req, '/activate');
           return jsonResponse({ error: 'Invalid key format' }, 400);
         }
-
         if (!isValidDiscordId(discord_id)) {
           await logError(kv, "Invalid Discord ID", req, '/activate');
           return jsonResponse({ error: 'Invalid Discord ID' }, 400);
         }
 
         const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
-
-        // CHECK IF USER IS BLACKLISTED BEFORE ACTIVATION
         const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
         if (blacklistCheck.blacklisted) {
           await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
-          return jsonResponse({ 
-            error: "Activation denied. Your account is blacklisted.",
-            reason: blacklistCheck.entry?.reason,
-            expires: blacklistCheck.entry?.expires_at 
-          }, 403);
+          return jsonResponse({ error: "Activation denied. Your account is blacklisted.", reason: blacklistCheck.entry?.reason, expires: blacklistCheck.entry?.expires_at }, 403);
         }
 
         const entry = await kv.get(['keys', key]);
-        
         if (!entry.value) {
           await logError(kv, "Key not found", req, '/activate');
           return jsonResponse({ error: 'Invalid key' }, 404);
         }
 
         const keyData = entry.value;
-        
-        // Check if key expired (unactivated keys only)
         if (!keyData.activated && keyData.expires_at < Date.now()) {
           await kv.delete(['keys', key]);
           await logError(kv, "Expired key activation attempt", req, '/activate');
           return jsonResponse({ error: 'Key has expired' }, 410);
         }
-        
         if (!keyData.workink_completed) {
           await logError(kv, "Unverified key activation attempt", req, '/activate');
           return jsonResponse({ error: 'Key not verified' }, 401);
         }
 
-        // In the activation endpoint, add token renewal support
-if (keyData.activated) {
-  // Check if this is a renewal of an activated key
-  if (keyData.expires_at < Date.now()) {
-    // Renew the token for an expired but previously activated key
-    const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-    
-    // Update token expiration
-    if (keyData.script_token) {
-      const tokenEntry = await kv.get(["token", keyData.script_token]);
-      if (tokenEntry.value) {
-        const tokenData = tokenEntry.value;
-        tokenData.expires_at = tokenExpiresAt;
-        await kv.set(["token", keyData.script_token], tokenData);
-      }
-    }
-    
-    // Reset key expiration
-    keyData.expires_at = Date.now() + KEY_EXPIRY_MS;
-    keyData.renewed_at = Date.now();
-    keyData.renewal_count = (keyData.renewal_count || 0) + 1;
-    
-    await kv.set(['keys', key], keyData);
-    
-    return jsonResponse({
-      success: true,
-      key: key,
-      script_token: keyData.script_token,
-      script_url: `https://api.napsy.dev/scripts/${keyData.script_token}`,
-      token_expires_at: new Date(tokenExpiresAt).toISOString(),
-      activation_data: keyData.activation_data,
-      is_renewal: true,
-      message: 'Key renewed and token reactivated successfully'
-    });
-  } else {
-    return jsonResponse({ 
-      error: 'Key already activated',
-      activation_data: keyData.activation_data
-    }, 409);
-  }
-}
+        // Handle renewal of activated key
+        if (keyData.activated) {
+          if (keyData.expires_at < Date.now()) {
+            const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+            if (keyData.script_token) {
+              const tokenEntry = await kv.get(["token", keyData.script_token]);
+              if (tokenEntry.value) {
+                const tokenData = tokenEntry.value;
+                tokenData.expires_at = tokenExpiresAt;
+                await kv.set(["token", keyData.script_token], tokenData);
+              }
+            }
+            keyData.expires_at = Date.now() + KEY_EXPIRY_MS;
+            keyData.renewed_at = Date.now();
+            keyData.renewal_count = (keyData.renewal_count || 0) + 1;
+            await kv.set(['keys', key], keyData);
+            return jsonResponse({
+              success: true, key: key, script_token: keyData.script_token,
+              script_url: `https://api.napsy.dev/scripts/${keyData.script_token}`,
+              token_expires_at: new Date(tokenExpiresAt).toISOString(),
+              activation_data: keyData.activation_data, is_renewal: true,
+              message: 'Key renewed and token reactivated successfully'
+            });
+          } else {
+            return jsonResponse({ error: 'Key already activated', activation_data: keyData.activation_data }, 409);
+          }
+        }
 
-        // Generate script token with 24 hour expiry
+        // New activation
         const scriptToken = generateToken();
         const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-        
-        // Store script token with user info
         await kv.set(['token', scriptToken], {
-          user_id: discord_id,
-          username: sanitizedUsername,
-          expires_at: tokenExpiresAt,
-          created_at: Date.now(),
-          key: key,
-          activation_ip: keyData.workink_data.ip
+          user_id: discord_id, username: sanitizedUsername, expires_at: tokenExpiresAt,
+          created_at: Date.now(), key: key, activation_ip: keyData.workink_data.ip
         });
 
-        // Activate the key with user info
         keyData.activated = true;
         await updateUserSession(kv, keyData.workink_data.ip, keyData.workink_data.user_agent, undefined, discord_id);
         keyData.script_token = scriptToken;
-        keyData.activation_data = {
-          ip: keyData.workink_data.ip,
-          discord_id: discord_id,
-          discord_username: sanitizedUsername,
-          activated_at: Date.now()
-        };
+        keyData.activation_data = { ip: keyData.workink_data.ip, discord_id: discord_id,
+          discord_username: sanitizedUsername, activated_at: Date.now() };
         
         await kv.set(['keys', key], keyData);
         metrics.successfulActivations++;
 
         return jsonResponse({
-          success: true,
-          key: key,
-          script_token: scriptToken,
+          success: true, key: key, script_token: scriptToken,
           script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
           token_expires_at: new Date(tokenExpiresAt).toISOString(),
-          activation_data: keyData.activation_data,
-          message: 'Key activated successfully'
+          activation_data: keyData.activation_data, message: 'Key activated successfully'
         });
       }
 
@@ -2103,50 +1424,25 @@ if (keyData.activated) {
           await logError(kv, "Unauthorized key check attempt", req, '/check-key');
           return jsonResponse({ error: 'Unauthorized' }, 401);
         }
-
         const key = url.searchParams.get('key');
-        if (!key) {
-          return jsonResponse({ error: 'Key parameter required' }, 400);
-        }
-
-        if (!isValidKeyFormat(key)) {
-          return jsonResponse({ error: 'Invalid key format' }, 400);
-        }
-
+        if (!key) return jsonResponse({ error: 'Key parameter required' }, 400);
+        if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
         const entry = await kv.get(['keys', key]);
-
-        if (!entry.value) {
-          return jsonResponse({ error: 'Key not found' }, 404);
-        }
-
+        if (!entry.value) return jsonResponse({ error: 'Key not found' }, 404);
         const keyData = entry.value;
-        
-        // Check if unactivated key is expired
         if (!keyData.activated && keyData.expires_at < Date.now()) {
           await kv.delete(['keys', key]);
           return jsonResponse({ error: 'Key has expired' }, 410);
         }
-
         return jsonResponse({ key: keyData });
       }
 
-      // Admin blacklist management
-      if (url.pathname === '/admin/blacklist') {
-        return await handleAdminBlacklist(kv, req);
-      }
-
-      // Get user info for blacklisting
-      if (url.pathname === '/admin/user-info' && req.method === 'GET') {
-        return await handleAdminUserInfo(kv, req);
-      }
-
-      // Emergency restore endpoint
+      // Admin endpoints
+      if (url.pathname === '/admin/blacklist') return await handleAdminBlacklist(kv, req);
+      if (url.pathname === '/admin/user-info' && req.method === 'GET') return await handleAdminUserInfo(kv, req);
       if (url.pathname === '/admin/restore' && req.method === 'POST') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
-        if (apiKey !== ADMIN_API_KEY) {
-          return jsonResponse({ error: 'Unauthorized' }, 401);
-        }
-
+        if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
         try {
           await backupKeys(kv);
           return jsonResponse({ success: true, message: "Backup created successfully" });
@@ -2174,6 +1470,6 @@ if (keyData.activated) {
 
 // For local development
 if (import.meta.main) {
-  console.log("Server starting locally...");
+  console.log("Lunith Key System starting locally on port 8000...");
   Deno.serve(handler, { port: 8000 });
 }
