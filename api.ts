@@ -1,4 +1,4 @@
-// api.ts - Domain-based routing for key.napsy.dev and api.napsy.dev
+// api.ts - Fixed encoding and functional key system
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
@@ -21,18 +21,18 @@ end
 
 return "Iris Hub loaded successfully"`;
 
-// HTML for key.napsy.dev (Key System)
+// HTML for key.napsy.dev (Key System) - Fixed encoding
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Iris Hub - Key Activation</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #1a1a1a; color: white; }
         .container { background: #2d2d2d; padding: 30px; border-radius: 10px; border: 1px solid #444; }
-        input, button { padding: 12px; margin: 10px 0; border: none; border-radius: 5px; width: 100%; box-sizing: border-box; }
-        input { background: #1a1a1a; color: white; border: 1px solid #444; }
-        button { background: #7289da; color: white; cursor: pointer; font-weight: bold; }
+        button { padding: 12px; margin: 10px 0; border: none; border-radius: 5px; width: 100%; box-sizing: border-box; background: #7289da; color: white; cursor: pointer; font-weight: bold; }
         button:hover { background: #5b73c4; }
+        button:disabled { background: #555; cursor: not-allowed; }
         .key-display { background: #1a1a1a; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: monospace; word-break: break-all; }
         .success { color: #43b581; border-left: 4px solid #43b581; padding-left: 10px; }
         .error { color: #f04747; border-left: 4px solid #f04747; padding-left: 10px; }
@@ -92,18 +92,17 @@ const keySiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev (API Health/Info)
+// HTML for api.napsy.dev (API Health/Info) - Fixed encoding
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>Iris Hub API</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; text-align: center; background: #1a1a1a; color: white; }
         .container { background: #2d2d2d; padding: 40px; border-radius: 10px; border: 1px solid #444; }
         h1 { color: #7289da; }
         .status { color: #43b581; font-weight: bold; }
-        .endpoints { text-align: left; margin: 20px 0; }
-        .endpoint { background: #1a1a1a; padding: 10px; margin: 5px 0; border-radius: 5px; font-family: monospace; }
     </style>
 </head>
 <body>
@@ -111,16 +110,6 @@ const apiSiteHtml = `<!DOCTYPE html>
         <h1>🚀 Iris Hub API</h1>
         <p class="status">✅ Status: Online</p>
         <p>Secure script delivery service</p>
-        
-        <div class="endpoints">
-            <h3>API Endpoints:</h3>
-            <div class="endpoint">GET /health - Health check</div>
-            <div class="endpoint">GET /scripts/:token - Get script</div>
-            <div class="endpoint">POST /publishScript - Generate token (Admin)</div>
-            <div class="endpoint">POST /workink - Key verification</div>
-            <div class="endpoint">POST /activate - Activate key</div>
-        </div>
-        
         <p><a href="https://key.napsy.dev" style="color: #7289da;">Get your activation key →</a></p>
     </div>
 </body>
@@ -177,7 +166,7 @@ export async function handler(req: Request): Promise<Response> {
     if (hostname === 'key.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(keySiteHtml, { 
-          headers: { 'Content-Type': 'text/html', ...corsHeaders } 
+          headers: { 'Content-Type': 'text/html; charset=utf-8', ...corsHeaders } 
         });
       }
 
@@ -215,14 +204,14 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      return new Response("Key system endpoint not found", { status: 404 });
+      return new Response("Not found", { status: 404 });
     }
 
-    // 🚀 API.NAPSY.DEV - Script API
+    // 🚀 API.NAPSY.DEV - Script API (Limited endpoints)
     if (hostname === 'api.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(apiSiteHtml, {
-          headers: { "Content-Type": "text/html", ...corsHeaders },
+          headers: { "Content-Type": "text/html; charset=utf-8", ...corsHeaders },
         });
       }
 
@@ -253,10 +242,11 @@ export async function handler(req: Request): Promise<Response> {
         }
 
         return new Response(SCRIPT_CONTENT, {
-          headers: { "Content-Type": "text/plain", ...corsHeaders },
+          headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders },
         });
       }
 
+      // 🔒 ADMIN ENDPOINTS (Hidden from public)
       if (url.pathname === '/publishScript' && req.method === 'POST') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
         if (apiKey !== ADMIN_API_KEY) {
@@ -296,10 +286,10 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // Key activation endpoint (for Discord bot)
+      // 🔑 Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
         const body = await req.json();
-        const { key, discord_id, hwid, vmac } = body;
+        const { key, discord_id } = body;
         
         if (!key || !discord_id) {
           return jsonResponse({ error: 'Key and discord_id required' }, 400);
@@ -346,9 +336,7 @@ export async function handler(req: Request): Promise<Response> {
         keyData.script_token = scriptToken;
         keyData.activation_data = {
           ip: keyData.workink_data.ip,
-          discord_id,
-          hwid: hwid || null,
-          vmac: vmac || null,
+          discord_id: discord_id,
           activated_at: Date.now()
         };
         
@@ -365,7 +353,30 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      return new Response("API endpoint not found", { status: 404 });
+      // 🔍 Check key status (Admin/Discord bot only)
+      if (url.pathname === '/check-key' && req.method === 'GET') {
+        const apiKey = req.headers.get('X-Admin-Api-Key');
+        if (apiKey !== ADMIN_API_KEY) {
+          return jsonResponse({ error: 'Unauthorized' }, 401);
+        }
+
+        const key = url.searchParams.get('key');
+        if (!key) {
+          return jsonResponse({ error: 'Key parameter required' }, 400);
+        }
+
+        const kv = await Deno.openKv();
+        const entry = await kv.get(['keys', key]);
+        await kv.close();
+
+        if (!entry.value) {
+          return jsonResponse({ error: 'Key not found' }, 404);
+        }
+
+        return jsonResponse({ key: entry.value });
+      }
+
+      return new Response("Not found", { status: 404 });
     }
 
     // Default response for other domains
