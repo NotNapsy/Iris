@@ -28,8 +28,33 @@ let metrics = {
   expiredCleanups: 0,
   lastCleanup: Date.now(),
   rateLimitHits: 0,
-  errors: 0
+  errors: 0,
+  blacklistChecks: 0,
+  refills: 0
 };
+
+// Enhanced Blacklist System
+interface BlacklistEntry {
+  discord_id: string;
+  ip: string;
+  hwid?: string; // For future use
+  vmac?: string; // For future use
+  user_agent?: string;
+  reason: string;
+  created_at: number;
+  expires_at?: number;
+  created_by: string;
+  identifiers: string[]; // All tracked identifiers
+}
+
+// User Session System
+interface UserSession {
+  ip: string;
+  user_agent: string;
+  last_active: number;
+  current_key?: string;
+  keys_generated: string[]; // History of keys
+}
 
 // Your script content - Lunith branding
 const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
@@ -44,12 +69,209 @@ end
 
 return "Lunith loaded successfully"`;
 
-// HTML for key.napsy.dev - Polished professional design
+// Parse duration string (1Y, 1W, 1D, 1H, 1M, 1S)
+function parseDuration(durationStr: string): number | null {
+  const regex = /(\d+)([YWMDS])/gi;
+  let totalMs = 0;
+  let match;
+
+  while ((match = regex.exec(durationStr)) !== null) {
+    const value = parseInt(match[1]);
+    const unit = match[2].toUpperCase();
+    
+    switch (unit) {
+      case 'Y': totalMs += value * 365 * 24 * 60 * 60 * 1000; break;
+      case 'W': totalMs += value * 7 * 24 * 60 * 60 * 1000; break;
+      case 'D': totalMs += value * 24 * 60 * 60 * 1000; break;
+      case 'H': totalMs += value * 60 * 60 * 1000; break;
+      case 'M': totalMs += value * 60 * 1000; break;
+      case 'S': totalMs += value * 1000; break;
+      default: return null;
+    }
+  }
+
+  return totalMs > 0 ? totalMs : null;
+}
+
+// Get all identifiers from a request/key data
+function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any): string[] {
+  const identifiers: string[] = [];
+  
+  // Always track these
+  if (discordId && discordId !== 'unknown') identifiers.push(`discord:${discordId}`);
+  if (ip && ip !== 'unknown') identifiers.push(`ip:${ip}`);
+  if (userAgent && userAgent !== 'unknown') identifiers.push(`user_agent:${userAgent}`);
+  
+  // Add HWID/VMAC when available from activated keys
+  if (keyData?.activation_data?.hwid) {
+    identifiers.push(`hwid:${keyData.activation_data.hwid}`);
+  }
+  if (keyData?.activation_data?.vmac) {
+    identifiers.push(`vmac:${keyData.activation_data.vmac}`);
+  }
+  
+  return identifiers;
+}
+
+// Enhanced blacklist check - checks all identifiers
+async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAgent: string, keyData?: any): Promise<{ 
+  blacklisted: boolean; 
+  entry?: BlacklistEntry;
+  matchedIdentifier?: string;
+}> {
+  metrics.blacklistChecks++;
+  
+  const identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
+  
+  for (const identifier of identifiers) {
+    const entry = await kv.get(["blacklist", "identifiers", identifier]);
+    if (entry.value) {
+      const blacklistEntry = entry.value as BlacklistEntry;
+      
+      // Check if entry has expired
+      if (blacklistEntry.expires_at && Date.now() > blacklistEntry.expires_at) {
+        await kv.delete(["blacklist", "identifiers", identifier]);
+        continue;
+      }
+      
+      return { 
+        blacklisted: true, 
+        entry: blacklistEntry,
+        matchedIdentifier: identifier
+      };
+    }
+  }
+  
+  return { blacklisted: false };
+}
+
+// Add to blacklist with all identifiers
+async function addToBlacklist(
+  kv: Deno.Kv, 
+  discordId: string, 
+  ip: string, 
+  userAgent: string,
+  reason: string, 
+  createdBy: string, 
+  durationMs?: number,
+  keyData?: any
+): Promise<{ success: boolean; identifiers: string[] }> {
+  const now = Date.now();
+  const expires_at = durationMs ? now + durationMs : undefined;
+  
+  const identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
+  
+  const entry: BlacklistEntry = {
+    discord_id: discordId,
+    ip: ip,
+    user_agent: userAgent,
+    reason,
+    created_at: now,
+    expires_at,
+    created_by: createdBy,
+    identifiers
+  };
+  
+  // Store under each identifier for quick lookup
+  for (const identifier of identifiers) {
+    await kv.set(["blacklist", "identifiers", identifier], entry);
+  }
+  
+  // Also store main entry for management
+  await kv.set(["blacklist", "entries", discordId], entry);
+  
+  return { success: true, identifiers };
+}
+
+// Remove from blacklist (whitelist)
+async function removeFromBlacklist(kv: Deno.Kv, discordId: string): Promise<{ success: boolean; removed: number }> {
+  let removed = 0;
+  
+  // Get the main entry to find all identifiers
+  const mainEntry = await kv.get(["blacklist", "entries", discordId]);
+  if (mainEntry.value) {
+    const entry = mainEntry.value as BlacklistEntry;
+    
+    // Remove all identifier entries
+    for (const identifier of entry.identifiers) {
+      await kv.delete(["blacklist", "identifiers", identifier]);
+      removed++;
+    }
+    
+    // Remove main entry
+    await kv.delete(["blacklist", "entries", discordId]);
+    removed++;
+  }
+  
+  return { success: true, removed };
+}
+
+// Get all blacklist entries
+async function getBlacklistEntries(kv: Deno.Kv): Promise<BlacklistEntry[]> {
+  const entries: BlacklistEntry[] = [];
+  
+  for await (const entry of kv.list({ prefix: ["blacklist", "entries"] })) {
+    entries.push(entry.value as BlacklistEntry);
+  }
+  
+  return entries;
+}
+
+// Find blacklist entry by Discord ID
+async function getBlacklistEntry(kv: Deno.Kv, discordId: string): Promise<BlacklistEntry | null> {
+  const entry = await kv.get(["blacklist", "entries", discordId]);
+  return entry.value as BlacklistEntry || null;
+}
+
+// User Session Management
+async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promise<UserSession> {
+  const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
+  const entry = await kv.get(["sessions", sessionId]);
+  
+  if (entry.value) {
+    const session = entry.value as UserSession;
+    // Update last active
+    session.last_active = Date.now();
+    await kv.set(["sessions", sessionId], session);
+    return session;
+  }
+  
+  // Create new session
+  const newSession: UserSession = {
+    ip,
+    user_agent: userAgent,
+    last_active: Date.now(),
+    keys_generated: []
+  };
+  
+  await kv.set(["sessions", sessionId], newSession);
+  return newSession;
+}
+
+async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string): Promise<UserSession> {
+  const session = await getUserSession(kv, ip, userAgent);
+  
+  if (newKey) {
+    session.current_key = newKey;
+    session.keys_generated.push(newKey);
+    // Keep only last 10 keys
+    if (session.keys_generated.length > 10) {
+      session.keys_generated = session.keys_generated.slice(-10);
+    }
+  }
+  
+  const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
+  await kv.set(["sessions", sessionId], session);
+  
+  return session;
+}
+
+// Enhanced HTML with User Panel
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Lunith - Key Activation</title>
+    <title>Lunith - Key System</title>
     <style>
         * {
             margin: 0;
@@ -248,77 +470,352 @@ const keySiteHtml = `<!DOCTYPE html>
             margin: 15px 0;
             font-size: 13px;
         }
+        
+        /* Enhanced Panel Styles */
+        .panel-section {
+            background: rgba(30, 30, 30, 0.8);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        
+        .panel-title {
+            color: #7289da;
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .key-status {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin: 15px 0;
+        }
+        
+        .status-item {
+            background: rgba(255, 255, 255, 0.05);
+            padding: 12px;
+            border-radius: 8px;
+            border-left: 4px solid #7289da;
+        }
+        
+        .status-label {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 5px;
+        }
+        
+        .status-value {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #e8e8e8;
+        }
+        
+        .action-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin: 20px 0;
+        }
+        
+        .btn-secondary {
+            background: linear-gradient(135deg, #43b581 0%, #369a6d 100%) !important;
+        }
+        
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #369a6d 0%, #2d8a5c 100%) !important;
+        }
+        
+        .history-item {
+            background: rgba(255, 255, 255, 0.03);
+            padding: 10px;
+            border-radius: 6px;
+            margin: 5px 0;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+        }
+        
+        .tab-container {
+            display: flex;
+            margin: 20px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .tab {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: all 0.2s ease;
+        }
+        
+        .tab.active {
+            border-bottom-color: #7289da;
+            color: #7289da;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
         <div class="logo">
             <h1>Lunith</h1>
-            <p>Key Activation System</p>
+            <p>Key Management System</p>
         </div>
         
-        <div class="section">
-            <p>Generate your unique activation key to access Lunith services.</p>
+        <div class="tab-container">
+            <div class="tab active" onclick="switchTab('generate')">Generate Key</div>
+            <div class="tab" onclick="switchTab('panel')">My Panel</div>
         </div>
         
-        <div class="expiry-notice">
-            <strong>Important:</strong> Generated keys expire in 24 hours if not activated. Activated tokens are valid for 24 hours.
+        <!-- Generate Tab -->
+        <div id="generateTab" class="tab-content active">
+            <div class="section">
+                <p>Generate your unique activation key to access Lunith services.</p>
+            </div>
+            
+            <div class="expiry-notice">
+                <strong>Important:</strong> Generated keys expire in 24 hours if not activated. Activated tokens are valid for 24 hours.
+            </div>
+            
+            <div id="rateLimitMessage" class="rate-limit-message hidden">
+                <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
+            </div>
+            
+            <div id="workinkSection">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div>
+                        <strong>Start Verification</strong>
+                        <div class="info-text">This creates a key tied to your connection for security.</div>
+                    </div>
+                </div>
+                
+                <button onclick="startWorkInk()" id="workinkBtn">
+                    Begin Verification Process
+                </button>
+            </div>
+            
+            <div id="keySection" class="hidden">
+                <div class="success">
+                    <strong>Verification Complete</strong>
+                    <div>Your activation key has been generated successfully.</div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div>
+                        <strong>Your Activation Key</strong>
+                        <div class="info-text">Copy this key and activate it within 24 hours.</div>
+                    </div>
+                </div>
+                
+                <div class="key-display" id="generatedKey">Generating your key...</div>
+                
+                <button onclick="copyKey()" id="copyBtn">
+                    Copy Key to Clipboard
+                </button>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div>
+                        <strong>Activate in Discord</strong>
+                        <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
+                    </div>
+                </div>
+                
+                <div class="warning">
+                    <strong>Key Expires:</strong> This key will expire <span id="expiryTime">in 24 hours</span> if not activated.
+                </div>
+            </div>
         </div>
         
-        <div id="rateLimitMessage" class="rate-limit-message hidden">
-            <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
-        </div>
-        
-        <div id="workinkSection">
-            <div class="step">
-                <div class="step-number">1</div>
-                <div>
-                    <strong>Start Verification</strong>
-                    <div class="info-text">This creates a key tied to your connection for security.</div>
+        <!-- User Panel Tab -->
+        <div id="panelTab" class="tab-content">
+            <div class="panel-section">
+                <div class="panel-header">
+                    <div class="panel-title">Session Overview</div>
+                </div>
+                
+                <div id="panelContent">
+                    <div class="key-status">
+                        <div class="status-item">
+                            <div class="status-label">Your IP</div>
+                            <div class="status-value" id="panelIp">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Keys Generated</div>
+                            <div class="status-value" id="panelKeys">0</div>
+                        </div>
+                    </div>
+                    
+                    <div id="currentKeyInfo" class="hidden">
+                        <div class="step">
+                            <div class="step-number">★</div>
+                            <div>
+                                <strong>Current Active Key</strong>
+                                <div class="info-text">Your most recently generated key</div>
+                            </div>
+                        </div>
+                        
+                        <div class="key-display" id="panelCurrentKey">Loading...</div>
+                        
+                        <div class="action-buttons">
+                            <button onclick="copyPanelKey()" class="btn-secondary">
+                                Copy Key
+                            </button>
+                            <button onclick="refillKey()" id="refillBtn">
+                                Refill Key
+                            </button>
+                        </div>
+                        
+                        <div class="warning">
+                            <strong>Status:</strong> <span id="keyStatus">Loading...</span>
+                        </div>
+                    </div>
+                    
+                    <div id="noKeyInfo">
+                        <div class="info-text">
+                            No active key found. Generate a new key to get started.
+                        </div>
+                        <button onclick="switchTab('generate')" style="margin-top: 15px;">
+                            Generate New Key
+                        </button>
+                    </div>
                 </div>
             </div>
             
-            <button onclick="startWorkInk()" id="workinkBtn">
-                Begin Verification Process
-            </button>
-        </div>
-        
-        <div id="keySection" class="hidden">
-            <div class="success">
-                <strong>Verification Complete</strong>
-                <div>Your activation key has been generated successfully.</div>
-            </div>
-            
-            <div class="step">
-                <div class="step-number">2</div>
-                <div>
-                    <strong>Your Activation Key</strong>
-                    <div class="info-text">Copy this key and activate it within 24 hours.</div>
+            <div class="panel-section">
+                <div class="panel-header">
+                    <div class="panel-title">Key History</div>
                 </div>
-            </div>
-            
-            <div class="key-display" id="generatedKey">Generating your key...</div>
-            
-            <button onclick="copyKey()" id="copyBtn">
-                Copy Key to Clipboard
-            </button>
-            
-            <div class="step">
-                <div class="step-number">3</div>
-                <div>
-                    <strong>Activate in Discord</strong>
-                    <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
+                <div id="keyHistory">
+                    <div class="info-text">Loading key history...</div>
                 </div>
-            </div>
-            
-            <div class="warning">
-                <strong>Key Expires:</strong> This key will expire <span id="expiryTime">in 24 hours</span> if not activated.
             </div>
         </div>
     </div>
 
     <script>
+        // Tab switching
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+            
+            // Load panel data if switching to panel
+            if (tabName === 'panel') {
+                loadUserPanel();
+            }
+        }
+        
+        // Load user panel data
+        async function loadUserPanel() {
+            try {
+                const response = await fetch('/user-panel');
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update session info
+                    document.getElementById('panelIp').textContent = result.session.ip;
+                    document.getElementById('panelKeys').textContent = result.session.keys_generated;
+                    
+                    // Update current key info
+                    if (result.current_key) {
+                        document.getElementById('panelCurrentKey').textContent = result.current_key.key;
+                        document.getElementById('keyStatus').textContent = 
+                            result.current_key.activated ? 'Activated' : 'Not Activated';
+                        document.getElementById('currentKeyInfo').classList.remove('hidden');
+                        document.getElementById('noKeyInfo').classList.add('hidden');
+                        
+                        // Load key history
+                        if (result.session.keys_generated > 0) {
+                            const historyHtml = result.session.keys_generated.map(key => 
+                                `<div class="history-item">${key}</div>`
+                            ).join('');
+                            document.getElementById('keyHistory').innerHTML = historyHtml;
+                        }
+                    } else {
+                        document.getElementById('currentKeyInfo').classList.add('hidden');
+                        document.getElementById('noKeyInfo').classList.remove('hidden');
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load panel:', error);
+            }
+        }
+        
+        // Refill key function
+        async function refillKey() {
+            const btn = document.getElementById('refillBtn');
+            const originalText = btn.textContent;
+            
+            btn.disabled = true;
+            btn.textContent = 'Refilling...';
+            
+            try {
+                const response = await fetch('/refill', { method: 'POST' });
+                const result = await response.json();
+                
+                if (result.success) {
+                    // Update UI with new key
+                    document.getElementById('panelCurrentKey').textContent = result.key;
+                    document.getElementById('panelKeys').textContent = result.total_keys_generated;
+                    document.getElementById('keyStatus').textContent = 'Not Activated';
+                    
+                    // Auto-copy new key
+                    navigator.clipboard.writeText(result.key).then(() => {
+                        btn.textContent = '✓ Refilled & Copied';
+                        setTimeout(() => {
+                            btn.textContent = 'Refill Key';
+                            btn.disabled = false;
+                        }, 2000);
+                    });
+                } else {
+                    alert('Refill failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        }
+        
+        // Copy panel key
+        function copyPanelKey() {
+            const key = document.getElementById('panelCurrentKey').textContent;
+            navigator.clipboard.writeText(key).then(() => {
+                alert('Key copied to clipboard!');
+            });
+        }
+        
+        // Original functions
         function updateExpiryTime() {
             const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
             document.getElementById('expiryTime').textContent = expiryTime.toLocaleString();
@@ -386,7 +883,7 @@ const keySiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev remains the same
+// API site HTML remains the same
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -634,6 +1131,16 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
+    // Clean up expired blacklist entries
+    const blacklistEntries = kv.list({ prefix: ["blacklist", "identifiers"] });
+    for await (const entry of blacklistEntries) {
+      const blacklistEntry = entry.value as BlacklistEntry;
+      if (blacklistEntry && blacklistEntry.expires_at && blacklistEntry.expires_at < now) {
+        await kv.delete(entry.key);
+        cleaned++;
+      }
+    }
+
     // Clean up old error logs (keep only last 1000)
     const errorEntries = [];
     for await (const entry of kv.list({ prefix: ["errors"] })) {
@@ -693,6 +1200,191 @@ function monitorPerformance() {
   }
 }
 
+// Enhanced WorkInk endpoint with session tracking and blacklist checks
+async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string) {
+  // Check blacklist first
+  const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
+  if (blacklistCheck.blacklisted) {
+    return jsonResponse({ 
+      error: "Access denied. Your connection is blacklisted.",
+      reason: blacklistCheck.entry?.reason 
+    }, 403);
+  }
+  
+  const session = await getUserSession(kv, clientIP, userAgent);
+  const key = generateFormattedKey();
+  const expiresAt = Date.now() + KEY_EXPIRY_MS;
+  
+  const keyData = {
+    key,
+    created_at: Date.now(),
+    expires_at: expiresAt,
+    activated: false,
+    workink_completed: true,
+    workink_data: {
+      ip: clientIP,
+      user_agent: userAgent,
+      completed_at: Date.now(),
+      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`
+    }
+  };
+  
+  await kv.set(["keys", key], keyData);
+  await updateUserSession(kv, clientIP, userAgent, key);
+  
+  return jsonResponse({
+    success: true,
+    key: key,
+    expires_at: new Date(expiresAt).toISOString(),
+    existing_session: session.keys_generated.length > 0,
+    previous_keys: session.keys_generated.length,
+    message: "Verification completed successfully"
+  });
+}
+
+// Refill system - generate new key for existing session
+async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
+  // Check blacklist
+  const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
+  if (blacklistCheck.blacklisted) {
+    return jsonResponse({ 
+      error: "Access denied. Your connection is blacklisted.",
+      reason: blacklistCheck.entry?.reason 
+    }, 403);
+  }
+  
+  const session = await getUserSession(kv, clientIP, userAgent);
+  
+  if (!session.current_key && session.keys_generated.length === 0) {
+    return jsonResponse({ 
+      error: "No existing key found. Please generate a new key first." 
+    }, 400);
+  }
+  
+  // Generate new key
+  const key = generateFormattedKey();
+  const expiresAt = Date.now() + KEY_EXPIRY_MS;
+  
+  const keyData = {
+    key,
+    created_at: Date.now(),
+    expires_at: expiresAt,
+    activated: false,
+    workink_completed: true,
+    workink_data: {
+      ip: clientIP,
+      user_agent: userAgent,
+      completed_at: Date.now(),
+      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
+      is_refill: true
+    }
+  };
+  
+  await kv.set(["keys", key], keyData);
+  await updateUserSession(kv, clientIP, userAgent, key);
+  metrics.refills++;
+  
+  return jsonResponse({
+    success: true,
+    key: key,
+    expires_at: new Date(expiresAt).toISOString(),
+    is_refill: true,
+    total_keys_generated: session.keys_generated.length + 1,
+    message: "Key refilled successfully"
+  });
+}
+
+// User panel endpoint
+async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string) {
+  const session = await getUserSession(kv, clientIP, userAgent);
+  const currentKey = session.current_key;
+  
+  let keyInfo = null;
+  if (currentKey) {
+    const keyEntry = await kv.get(["keys", currentKey]);
+    if (keyEntry.value) {
+      keyInfo = keyEntry.value;
+    }
+  }
+  
+  return jsonResponse({
+    success: true,
+    session: {
+      ip: session.ip,
+      keys_generated: session.keys_generated.length,
+      last_active: session.last_active,
+      current_key: session.current_key
+    },
+    current_key: keyInfo ? {
+      key: keyInfo.key,
+      activated: keyInfo.activated,
+      created_at: keyInfo.created_at,
+      expires_at: keyInfo.expires_at
+    } : null,
+    can_refill: true // Always allow refill for now
+  });
+}
+
+// Admin endpoints for blacklist management
+async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const url = new URL(req.url);
+  const clientIP = getClientIP(req);
+
+  if (req.method === 'POST') {
+    try {
+      const body = await req.json();
+      const { discord_id, reason, created_by, duration_ms, user_data } = body;
+      
+      if (!discord_id || !reason || !created_by) {
+        return jsonResponse({ error: 'Missing required fields' }, 400);
+      }
+
+      const result = await addToBlacklist(
+        kv, 
+        discord_id, 
+        user_data?.ip || 'unknown', 
+        user_data?.user_agent || 'unknown',
+        reason, 
+        created_by, 
+        duration_ms,
+        user_data
+      );
+
+      return jsonResponse(result);
+    } catch (error) {
+      return jsonResponse({ error: 'Invalid JSON' }, 400);
+    }
+  }
+
+  if (req.method === 'DELETE') {
+    const discordId = url.searchParams.get('discord_id');
+    if (!discordId) {
+      return jsonResponse({ error: 'discord_id parameter required' }, 400);
+    }
+
+    const result = await removeFromBlacklist(kv, discordId);
+    return jsonResponse(result);
+  }
+
+  if (req.method === 'GET') {
+    if (url.searchParams.get('discord_id')) {
+      const discordId = url.searchParams.get('discord_id')!;
+      const entry = await getBlacklistEntry(kv, discordId);
+      return jsonResponse({ entry });
+    } else {
+      const entries = await getBlacklistEntries(kv);
+      return jsonResponse({ entries });
+    }
+  }
+
+  return jsonResponse({ error: 'Method not allowed' }, 405);
+}
+
 // Main handler with all enhancements
 let isWarm = false;
 
@@ -743,30 +1435,15 @@ export async function handler(req: Request): Promise<Response> {
       }
 
       if (url.pathname === '/workink' && req.method === 'POST') {
-        const key = generateFormattedKey();
-        const expiresAt = Date.now() + KEY_EXPIRY_MS;
-        
-        const keyData = {
-          key,
-          created_at: Date.now(),
-          expires_at: expiresAt,
-          activated: false,
-          workink_completed: true,
-          workink_data: {
-            ip: clientIP,
-            user_agent: userAgent,
-            completed_at: Date.now()
-          }
-        };
-        
-        await kv.set(["keys", key], keyData);
-        
-        return jsonResponse({
-          success: true,
-          key: key,
-          expires_at: new Date(expiresAt).toISOString(),
-          message: "Verification completed successfully"
-        });
+        return await handleWorkInk(kv, clientIP, userAgent);
+      }
+
+      if (url.pathname === '/refill' && req.method === 'POST') {
+        return await handleRefill(kv, clientIP, userAgent);
+      }
+
+      if (url.pathname === '/user-panel' && req.method === 'GET') {
+        return await handleUserPanel(kv, clientIP, userAgent);
       }
 
       if (url.pathname === '/health' && req.method === 'GET') {
@@ -955,6 +1632,43 @@ export async function handler(req: Request): Promise<Response> {
         }
 
         return jsonResponse({ key: keyData });
+      }
+
+      // Admin blacklist management
+      if (url.pathname === '/admin/blacklist' && req.method === 'GET') {
+        return await handleAdminBlacklist(kv, req);
+      }
+
+      if (url.pathname === '/admin/blacklist' && (req.method === 'POST' || req.method === 'DELETE')) {
+        return await handleAdminBlacklist(kv, req);
+      }
+
+      // Get user info for blacklisting
+      if (url.pathname === '/admin/user-info' && req.method === 'GET') {
+        const apiKey = req.headers.get('X-Admin-Api-Key');
+        if (apiKey !== ADMIN_API_KEY) {
+          return jsonResponse({ error: 'Unauthorized' }, 401);
+        }
+
+        const discordId = url.searchParams.get('discord_id');
+        if (!discordId) {
+          return jsonResponse({ error: 'discord_id parameter required' }, 400);
+        }
+
+        // Find keys activated by this user
+        const userKeys = [];
+        for await (const entry of kv.list({ prefix: ["keys"] })) {
+          const keyData = entry.value;
+          if (keyData.activated && keyData.activation_data?.discord_id === discordId) {
+            userKeys.push(keyData);
+          }
+        }
+
+        return jsonResponse({ 
+          user_id: discordId,
+          activated_keys: userKeys,
+          total_activations: userKeys.length
+        });
       }
 
       // Emergency restore endpoint
