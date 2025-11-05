@@ -2,7 +2,6 @@
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
-const SUPER_ADMINS = ['']; 
 
 // Rate limiting configuration
 const RATE_LIMIT = {
@@ -129,7 +128,9 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
 }> {
   metrics.blacklistChecks++;
   
-  // Your Discord ID
+  // Admin bypass - REMOVED FOR TESTING - Add your ID back after testing
+  const SUPER_ADMINS: string[] = []; // Empty array for testing
+  
   if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
     return { blacklisted: false };
   }
@@ -297,6 +298,7 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
   await kv.set(["sessions", sessionId], newSession);
   return newSession;
 }
+
 // Enhanced session update with Discord ID tracking
 async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string, discordId?: string): Promise<UserSession> {
   const session = await getUserSession(kv, ip, userAgent);
@@ -1294,8 +1296,6 @@ function monitorPerformance() {
 }
 
 // Enhanced WorkInk endpoint with session tracking and blacklist checks
-// Enhanced WorkInk endpoint with comprehensive blacklist checks
-// Enhanced WorkInk endpoint with comprehensive blacklist checks - FIXED
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
   // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
@@ -1413,6 +1413,7 @@ async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
     message: "Key refilled successfully"
   });
 }
+
 // User panel endpoint
 async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string) {
   const session = await getUserSession(kv, clientIP, userAgent);
@@ -1445,7 +1446,6 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
 }
 
 // Admin endpoints for blacklist management
-// Admin endpoints for blacklist management - FIXED JSON PARSING
 async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
   if (apiKey !== ADMIN_API_KEY) {
@@ -1676,110 +1676,110 @@ export async function handler(req: Request): Promise<Response> {
 
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
-  let body;
-  try {
-    body = await req.json();
-  } catch (error) {
-    await logError(kv, "Invalid JSON in activation request", req, '/activate');
-    return jsonResponse({ error: "Invalid JSON" }, 400);
-  }
+        let body;
+        try {
+          body = await req.json();
+        } catch (error) {
+          await logError(kv, "Invalid JSON in activation request", req, '/activate');
+          return jsonResponse({ error: "Invalid JSON" }, 400);
+        }
 
-  const { key, discord_id, discord_username } = body;
-  
-  if (!key || !discord_id) {
-    return jsonResponse({ error: 'Key and discord_id required' }, 400 );
-  }
+        const { key, discord_id, discord_username } = body;
+        
+        if (!key || !discord_id) {
+          return jsonResponse({ error: 'Key and discord_id required' }, 400 );
+        }
 
-  // Input validation
-  if (!isValidKeyFormat(key)) {
-    await logError(kv, "Invalid key format", req, '/activate');
-    return jsonResponse({ error: 'Invalid key format' }, 400);
-  }
+        // Input validation
+        if (!isValidKeyFormat(key)) {
+          await logError(kv, "Invalid key format", req, '/activate');
+          return jsonResponse({ error: 'Invalid key format' }, 400);
+        }
 
-  if (!isValidDiscordId(discord_id)) {
-    await logError(kv, "Invalid Discord ID", req, '/activate');
-    return jsonResponse({ error: 'Invalid Discord ID' }, 400);
-  }
+        if (!isValidDiscordId(discord_id)) {
+          await logError(kv, "Invalid Discord ID", req, '/activate');
+          return jsonResponse({ error: 'Invalid Discord ID' }, 400);
+        }
 
-  const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
+        const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
 
-  // CHECK IF USER IS BLACKLISTED BEFORE ACTIVATION
-  const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
-  if (blacklistCheck.blacklisted) {
-    await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
-    return jsonResponse({ 
-      error: "Activation denied. Your account is blacklisted.",
-      reason: blacklistCheck.entry?.reason,
-      expires: blacklistCheck.entry?.expires_at 
-    }, 403);
-  }
+        // CHECK IF USER IS BLACKLISTED BEFORE ACTIVATION
+        const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
+        if (blacklistCheck.blacklisted) {
+          await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
+          return jsonResponse({ 
+            error: "Activation denied. Your account is blacklisted.",
+            reason: blacklistCheck.entry?.reason,
+            expires: blacklistCheck.entry?.expires_at 
+          }, 403);
+        }
 
-  const entry = await kv.get(['keys', key]);
-  
-  if (!entry.value) {
-    await logError(kv, "Key not found", req, '/activate');
-    return jsonResponse({ error: 'Invalid key' }, 404);
-  }
+        const entry = await kv.get(['keys', key]);
+        
+        if (!entry.value) {
+          await logError(kv, "Key not found", req, '/activate');
+          return jsonResponse({ error: 'Invalid key' }, 404);
+        }
 
-  const keyData = entry.value;
-  
-  // Check if key expired (unactivated keys only)
-  if (!keyData.activated && keyData.expires_at < Date.now()) {
-    await kv.delete(['keys', key]);
-    await logError(kv, "Expired key activation attempt", req, '/activate');
-    return jsonResponse({ error: 'Key has expired' }, 410);
-  }
-  
-  if (!keyData.workink_completed) {
-    await logError(kv, "Unverified key activation attempt", req, '/activate');
-    return jsonResponse({ error: 'Key not verified' }, 401);
-  }
+        const keyData = entry.value;
+        
+        // Check if key expired (unactivated keys only)
+        if (!keyData.activated && keyData.expires_at < Date.now()) {
+          await kv.delete(['keys', key]);
+          await logError(kv, "Expired key activation attempt", req, '/activate');
+          return jsonResponse({ error: 'Key has expired' }, 410);
+        }
+        
+        if (!keyData.workink_completed) {
+          await logError(kv, "Unverified key activation attempt", req, '/activate');
+          return jsonResponse({ error: 'Key not verified' }, 401);
+        }
 
-  if (keyData.activated) {
-    return jsonResponse({ 
-      error: 'Key already activated',
-      activation_data: keyData.activation_data
-    }, 409);
-  }
+        if (keyData.activated) {
+          return jsonResponse({ 
+            error: 'Key already activated',
+            activation_data: keyData.activation_data
+          }, 409);
+        }
 
-  // Generate script token with 24 hour expiry
-  const scriptToken = generateToken();
-  const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-  
-  // Store script token with user info
-  await kv.set(['token', scriptToken], {
-    user_id: discord_id,
-    username: sanitizedUsername,
-    expires_at: tokenExpiresAt,
-    created_at: Date.now(),
-    key: key,
-    activation_ip: keyData.workink_data.ip
-  });
+        // Generate script token with 24 hour expiry
+        const scriptToken = generateToken();
+        const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+        
+        // Store script token with user info
+        await kv.set(['token', scriptToken], {
+          user_id: discord_id,
+          username: sanitizedUsername,
+          expires_at: tokenExpiresAt,
+          created_at: Date.now(),
+          key: key,
+          activation_ip: keyData.workink_data.ip
+        });
 
-  // Activate the key with user info
-  keyData.activated = true;
-  await updateUserSession(kv, keyData.workink_data.ip, keyData.workink_data.user_agent, undefined, discord_id);
-  keyData.script_token = scriptToken;
-  keyData.activation_data = {
-    ip: keyData.workink_data.ip,
-    discord_id: discord_id,
-    discord_username: sanitizedUsername,
-    activated_at: Date.now()
-  };
-  
-  await kv.set(['keys', key], keyData);
-  metrics.successfulActivations++;
+        // Activate the key with user info
+        keyData.activated = true;
+        await updateUserSession(kv, keyData.workink_data.ip, keyData.workink_data.user_agent, undefined, discord_id);
+        keyData.script_token = scriptToken;
+        keyData.activation_data = {
+          ip: keyData.workink_data.ip,
+          discord_id: discord_id,
+          discord_username: sanitizedUsername,
+          activated_at: Date.now()
+        };
+        
+        await kv.set(['keys', key], keyData);
+        metrics.successfulActivations++;
 
-  return jsonResponse({
-    success: true,
-    key: key,
-    script_token: scriptToken,
-    script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
-    token_expires_at: new Date(tokenExpiresAt).toISOString(),
-    activation_data: keyData.activation_data,
-    message: 'Key activated successfully'
-  });
-}
+        return jsonResponse({
+          success: true,
+          key: key,
+          script_token: scriptToken,
+          script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
+          token_expires_at: new Date(tokenExpiresAt).toISOString(),
+          activation_data: keyData.activation_data,
+          message: 'Key activated successfully'
+        });
+      }
 
       // Check key status
       if (url.pathname === '/check-key' && req.method === 'GET') {
@@ -1815,12 +1815,12 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({ key: keyData });
       }
 
-      // Admin blacklist management - FIXED ROUTING
+      // Admin blacklist management
       if (url.pathname === '/admin/blacklist') {
         return await handleAdminBlacklist(kv, req);
       }
 
-      // Get user info for blacklisting - FIXED ROUTING
+      // Get user info for blacklisting
       if (url.pathname === '/admin/user-info' && req.method === 'GET') {
         return await handleAdminUserInfo(kv, req);
       }
