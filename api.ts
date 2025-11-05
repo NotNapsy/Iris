@@ -1267,7 +1267,8 @@ function monitorPerformance() {
 
 // Enhanced WorkInk endpoint with session tracking and blacklist checks
 // Enhanced WorkInk endpoint with comprehensive blacklist checks
-async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string) {
+// Enhanced WorkInk endpoint with comprehensive blacklist checks - FIXED
+async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
   // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
@@ -1416,6 +1417,7 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
 }
 
 // Admin endpoints for blacklist management
+// Admin endpoints for blacklist management - FIXED JSON PARSING
 async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
   if (apiKey !== ADMIN_API_KEY) {
@@ -1425,14 +1427,20 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   const url = new URL(req.url);
 
   if (req.method === 'POST') {
+    let body;
     try {
-      const body = await req.json();
-      const { discord_id, reason, created_by, duration_ms, user_data } = body;
-      
-      if (!discord_id || !reason || !created_by) {
-        return jsonResponse({ error: 'Missing required fields' }, 400);
-      }
+      body = await req.json();
+    } catch (error) {
+      return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
+    }
 
+    const { discord_id, reason, created_by, duration_ms, user_data } = body;
+    
+    if (!discord_id || !reason || !created_by) {
+      return jsonResponse({ error: 'Missing required fields: discord_id, reason, created_by' }, 400);
+    }
+
+    try {
       const result = await addToBlacklist(
         kv, 
         discord_id, 
@@ -1446,7 +1454,8 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
 
       return jsonResponse(result);
     } catch (error) {
-      return jsonResponse({ error: 'Invalid JSON' }, 400);
+      console.error('Blacklist creation error:', error);
+      return jsonResponse({ error: 'Failed to create blacklist entry' }, 500);
     }
   }
 
@@ -1456,18 +1465,28 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
       return jsonResponse({ error: 'discord_id parameter required' }, 400);
     }
 
-    const result = await removeFromBlacklist(kv, discordId);
-    return jsonResponse(result);
+    try {
+      const result = await removeFromBlacklist(kv, discordId);
+      return jsonResponse(result);
+    } catch (error) {
+      console.error('Blacklist removal error:', error);
+      return jsonResponse({ error: 'Failed to remove blacklist entry' }, 500);
+    }
   }
 
   if (req.method === 'GET') {
-    if (url.searchParams.get('discord_id')) {
-      const discordId = url.searchParams.get('discord_id')!;
-      const entry = await getBlacklistEntry(kv, discordId);
-      return jsonResponse({ entry });
-    } else {
-      const entries = await getBlacklistEntries(kv);
-      return jsonResponse({ entries });
+    try {
+      if (url.searchParams.get('discord_id')) {
+        const discordId = url.searchParams.get('discord_id')!;
+        const entry = await getBlacklistEntry(kv, discordId);
+        return jsonResponse({ entry });
+      } else {
+        const entries = await getBlacklistEntries(kv);
+        return jsonResponse({ entries });
+      }
+    } catch (error) {
+      console.error('Blacklist query error:', error);
+      return jsonResponse({ error: 'Failed to query blacklist' }, 500);
     }
   }
 
@@ -1557,7 +1576,7 @@ export async function handler(req: Request): Promise<Response> {
       }
 
       if (url.pathname === '/workink' && req.method === 'POST') {
-        return await handleWorkInk(kv, clientIP, userAgent);
+        return await handleWorkInk(kv, clientIP, userAgent, req);
       }
 
       if (url.pathname === '/refill' && req.method === 'POST') {
