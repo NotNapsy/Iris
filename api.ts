@@ -1,4 +1,4 @@
-// api.ts - Professional Lunith branding
+// api.ts - Polished Lunith branding
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
@@ -21,110 +21,248 @@ end
 
 return "Lunith loaded successfully"`;
 
-// HTML for key.napsy.dev - Clean professional design
+// HTML for key.napsy.dev - Polished professional design
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Lunith - Key Activation</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; 
             max-width: 600px; 
-            margin: 50px auto; 
-            padding: 20px; 
-            background: #0f0f0f; 
-            color: #e0e0e0; 
+            margin: 0 auto;
+            padding: 20px;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8;
             line-height: 1.6;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
+        
         .container { 
-            background: #1a1a1a; 
-            padding: 30px; 
-            border-radius: 8px; 
-            border: 1px solid #333; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            background: rgba(25, 25, 25, 0.95);
+            padding: 40px 35px;
+            border-radius: 16px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            width: 100%;
         }
-        h1 { 
-            color: #7289da; 
-            margin-bottom: 10px;
-            font-weight: 600;
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
         }
+        
+        .logo h1 { 
+            color: #7289da;
+            font-size: 2.2rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.5px;
+        }
+        
+        .logo p {
+            color: #888;
+            font-size: 1.1rem;
+        }
+        
+        .section {
+            margin: 30px 0;
+        }
+        
         button { 
-            padding: 14px; 
-            margin: 15px 0; 
-            border: none; 
-            border-radius: 6px; 
-            width: 100%; 
-            box-sizing: border-box; 
-            background: #7289da; 
-            color: white; 
-            cursor: pointer; 
+            padding: 16px 24px;
+            margin: 20px 0 10px;
+            border: none;
+            border-radius: 12px;
+            width: 100%;
+            background: linear-gradient(135deg, #7289da 0%, #5b73c4 100%);
+            color: white;
+            cursor: pointer;
             font-weight: 600;
             font-size: 16px;
-            transition: background 0.2s;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
         }
+        
         button:hover { 
-            background: #5b73c4; 
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(114, 137, 218, 0.3);
         }
+        
+        button:active {
+            transform: translateY(0);
+        }
+        
         button:disabled { 
-            background: #444; 
-            cursor: not-allowed; 
+            background: #444;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
         }
+        
         .key-display { 
-            background: #0f0f0f; 
-            padding: 15px; 
-            border-radius: 6px; 
-            margin: 15px 0; 
-            font-family: 'Courier New', monospace; 
+            background: rgba(15, 15, 15, 0.8);
+            padding: 20px;
+            border-radius: 12px;
+            margin: 20px 0;
+            font-family: 'JetBrains Mono', 'Fira Code', monospace;
             word-break: break-all;
-            border: 1px solid #333;
-            font-size: 14px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            font-size: 15px;
+            text-align: center;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: #7289da;
         }
+        
         .success { 
-            color: #43b581; 
-            padding: 10px;
+            color: #43b581;
+            padding: 16px;
             background: rgba(67, 181, 129, 0.1);
-            border-radius: 4px;
-            margin: 10px 0;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #43b581;
+            font-weight: 500;
         }
+        
         .error { 
-            color: #f04747; 
-            padding: 10px;
+            color: #f04747;
+            padding: 16px;
             background: rgba(240, 71, 71, 0.1);
-            border-radius: 4px;
-            margin: 10px 0;
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #f04747;
+            font-weight: 500;
         }
-        .hidden { display: none; }
+        
+        .hidden { 
+            display: none;
+        }
+        
         .info-text {
-            color: #888;
+            color: #aaa;
             font-size: 14px;
-            margin: 5px 0;
+            line-height: 1.5;
+            margin: 12px 0;
+        }
+        
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
+            margin: 25px 0;
+        }
+        
+        .step {
+            display: flex;
+            align-items: center;
+            margin: 15px 0;
+            padding: 12px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 8px;
+        }
+        
+        .step-number {
+            background: #7289da;
+            color: white;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+        
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+        
+        .loading {
+            animation: pulse 1.5s ease-in-out infinite;
         }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
-        <h1>Lunith Key System</h1>
-        <p>Complete the verification process to generate your activation key.</p>
+        <div class="logo">
+            <h1>Lunith</h1>
+            <p>Key Activation System</p>
+        </div>
+        
+        <div class="section">
+            <p>Generate your unique activation key to access Lunith services.</p>
+        </div>
         
         <div id="workinkSection">
-            <button onclick="startWorkInk()" id="workinkBtn">Begin Verification</button>
-            <p class="info-text">This will generate a unique key tied to your connection.</p>
+            <div class="step">
+                <div class="step-number">1</div>
+                <div>
+                    <strong>Start Verification</strong>
+                    <div class="info-text">This creates a key tied to your connection for security.</div>
+                </div>
+            </div>
+            
+            <button onclick="startWorkInk()" id="workinkBtn">
+                Begin Verification Process
+            </button>
         </div>
         
         <div id="keySection" class="hidden">
-            <div class="success">Verification complete! Your key has been generated:</div>
-            <div class="key-display" id="generatedKey">Generating...</div>
-            <button onclick="copyKey()">Copy Key to Clipboard</button>
-            <p class="info-text">Use this key in our Discord server with the !activate command to receive your loader.</p>
+            <div class="success">
+                <strong>Verification Complete</strong>
+                <div>Your activation key has been generated successfully.</div>
+            </div>
+            
+            <div class="step">
+                <div class="step-number">2</div>
+                <div>
+                    <strong>Your Activation Key</strong>
+                    <div class="info-text">Copy this key for the next step.</div>
+                </div>
+            </div>
+            
+            <div class="key-display" id="generatedKey">Generating your key...</div>
+            
+            <button onclick="copyKey()" id="copyBtn">
+                Copy Key to Clipboard
+            </button>
+            
+            <div class="step">
+                <div class="step-number">3</div>
+                <div>
+                    <strong>Activate in Discord</strong>
+                    <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
+                </div>
+            </div>
         </div>
     </div>
 
     <script>
         async function startWorkInk() {
             const btn = document.getElementById('workinkBtn');
+            const originalText = btn.textContent;
+            
             btn.disabled = true;
-            btn.textContent = 'Processing...';
+            btn.textContent = 'Processing Verification...';
+            btn.classList.add('loading');
             
             try {
                 const response = await fetch('/workink', { method: 'POST' });
@@ -134,76 +272,148 @@ const keySiteHtml = `<!DOCTYPE html>
                     document.getElementById('workinkSection').classList.add('hidden');
                     document.getElementById('keySection').classList.remove('hidden');
                     document.getElementById('generatedKey').textContent = result.key;
+                    
+                    // Auto-copy to clipboard
+                    navigator.clipboard.writeText(result.key).then(() => {
+                        document.getElementById('copyBtn').textContent = '✓ Copied Successfully';
+                        setTimeout(() => {
+                            document.getElementById('copyBtn').textContent = 'Copy Key to Clipboard';
+                        }, 2000);
+                    });
                 } else {
-                    alert('Error: ' + result.error);
-                    btn.disabled = false;
-                    btn.textContent = 'Begin Verification';
+                    alert('Verification failed: ' + result.error);
+                    resetButton(btn, originalText);
                 }
             } catch (error) {
                 alert('Network error: ' + error.message);
-                btn.disabled = false;
-                btn.textContent = 'Begin Verification';
+                resetButton(btn, originalText);
             }
+        }
+        
+        function resetButton(btn, text) {
+            btn.disabled = false;
+            btn.textContent = text;
+            btn.classList.remove('loading');
         }
         
         function copyKey() {
             const key = document.getElementById('generatedKey').textContent;
+            const btn = document.getElementById('copyBtn');
+            
             navigator.clipboard.writeText(key).then(() => {
-                alert('Key copied to clipboard successfully.');
+                btn.textContent = '✓ Copied Successfully';
+                btn.style.background = 'linear-gradient(135deg, #43b581 0%, #369a6d 100%)';
+                
+                setTimeout(() => {
+                    btn.textContent = 'Copy Key to Clipboard';
+                    btn.style.background = 'linear-gradient(135deg, #7289da 0%, #5b73c4 100%)';
+                }, 2000);
             });
         }
     </script>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev - Clean professional design
+// HTML for api.napsy.dev - Polished design
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Lunith API</title>
     <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            max-width: 800px; 
-            margin: 50px auto; 
-            padding: 20px; 
-            text-align: center; 
-            background: #0f0f0f; 
-            color: #e0e0e0; 
+            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
         }
+        
         .container { 
-            background: #1a1a1a; 
-            padding: 40px; 
-            border-radius: 8px; 
-            border: 1px solid #333; 
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            background: rgba(25, 25, 25, 0.95);
+            padding: 50px 40px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(10px);
+            text-align: center;
+            width: 100%;
         }
+        
         h1 { 
-            color: #7289da; 
-            margin-bottom: 10px;
-            font-weight: 600;
+            color: #7289da;
+            font-size: 3rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            letter-spacing: -1px;
         }
+        
         .status { 
-            color: #43b581; 
+            color: #43b581;
             font-weight: 600;
-            margin: 20px 0;
+            font-size: 1.2rem;
+            margin: 25px 0;
+            padding: 12px 24px;
+            background: rgba(67, 181, 129, 0.1);
+            border-radius: 10px;
+            display: inline-block;
         }
+        
+        .description {
+            color: #aaa;
+            font-size: 1.1rem;
+            line-height: 1.6;
+            margin: 25px 0;
+            max-width: 500px;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        
         a {
             color: #7289da;
             text-decoration: none;
+            font-weight: 600;
+            transition: color 0.2s ease;
+            border-bottom: 2px solid transparent;
+            padding-bottom: 2px;
         }
+        
         a:hover {
-            text-decoration: underline;
+            color: #8ba1e8;
+            border-bottom-color: #7289da;
+        }
+        
+        .divider {
+            height: 1px;
+            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
+            margin: 30px auto;
+            width: 200px;
         }
     </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 <body>
     <div class="container">
-        <h1>Lunith API</h1>
-        <p class="status">Status: Online</p>
-        <p>Secure script delivery service</p>
-        <p><a href="https://key.napsy.dev">Get your activation key</a></p>
+        <h1>Lunith</h1>
+        <div class="status">API Status: Online</div>
+        <div class="description">
+            Secure script delivery and key management system serving Lunith services.
+        </div>
+        <div class="divider"></div>
+        <p>
+            <a href="https://key.napsy.dev">Get your activation key</a>
+        </p>
     </div>
 </body>
 </html>`;
@@ -244,7 +454,7 @@ function getClientIP(req: Request): string {
   return cfConnectingIP || xForwardedFor?.split(',')[0] || 'unknown';
 }
 
-// Main handler remains the same as previous version
+// Main handler remains the same
 export async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const hostname = url.hostname;
