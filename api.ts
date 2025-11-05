@@ -1543,98 +1543,109 @@ export async function handler(req: Request): Promise<Response> {
 
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
-        let body;
-        try {
-          body = await req.json();
-        } catch (error) {
-          await logError(kv, "Invalid JSON in activation request", req, '/activate');
-          return jsonResponse({ error: "Invalid JSON" }, 400);
-        }
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    await logError(kv, "Invalid JSON in activation request", req, '/activate');
+    return jsonResponse({ error: "Invalid JSON" }, 400);
+  }
 
-        const { key, discord_id, discord_username } = body;
-        
-        if (!key || !discord_id) {
-          return jsonResponse({ error: 'Key and discord_id required' }, 400 );
-        }
+  const { key, discord_id, discord_username } = body;
+  
+  if (!key || !discord_id) {
+    return jsonResponse({ error: 'Key and discord_id required' }, 400 );
+  }
 
-        // Input validation
-        if (!isValidKeyFormat(key)) {
-          await logError(kv, "Invalid key format", req, '/activate');
-          return jsonResponse({ error: 'Invalid key format' }, 400);
-        }
+  // Input validation
+  if (!isValidKeyFormat(key)) {
+    await logError(kv, "Invalid key format", req, '/activate');
+    return jsonResponse({ error: 'Invalid key format' }, 400);
+  }
 
-        if (!isValidDiscordId(discord_id)) {
-          await logError(kv, "Invalid Discord ID", req, '/activate');
-          return jsonResponse({ error: 'Invalid Discord ID' }, 400);
-        }
+  if (!isValidDiscordId(discord_id)) {
+    await logError(kv, "Invalid Discord ID", req, '/activate');
+    return jsonResponse({ error: 'Invalid Discord ID' }, 400);
+  }
 
-        const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
+  const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
 
-        const entry = await kv.get(['keys', key]);
-        
-        if (!entry.value) {
-          await logError(kv, "Key not found", req, '/activate');
-          return jsonResponse({ error: 'Invalid key' }, 404);
-        }
+  // CHECK IF USER IS BLACKLISTED BEFORE ACTIVATION
+  const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
+  if (blacklistCheck.blacklisted) {
+    await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
+    return jsonResponse({ 
+      error: "Activation denied. Your account is blacklisted.",
+      reason: blacklistCheck.entry?.reason,
+      expires: blacklistCheck.entry?.expires_at 
+    }, 403);
+  }
 
-        const keyData = entry.value;
-        
-        // Check if key expired (unactivated keys only)
-        if (!keyData.activated && keyData.expires_at < Date.now()) {
-          await kv.delete(['keys', key]);
-          await logError(kv, "Expired key activation attempt", req, '/activate');
-          return jsonResponse({ error: 'Key has expired' }, 410);
-        }
-        
-        if (!keyData.workink_completed) {
-          await logError(kv, "Unverified key activation attempt", req, '/activate');
-          return jsonResponse({ error: 'Key not verified' }, 401);
-        }
+  const entry = await kv.get(['keys', key]);
+  
+  if (!entry.value) {
+    await logError(kv, "Key not found", req, '/activate');
+    return jsonResponse({ error: 'Invalid key' }, 404);
+  }
 
-        if (keyData.activated) {
-          return jsonResponse({ 
-            error: 'Key already activated',
-            activation_data: keyData.activation_data
-          }, 409);
-        }
+  const keyData = entry.value;
+  
+  // Check if key expired (unactivated keys only)
+  if (!keyData.activated && keyData.expires_at < Date.now()) {
+    await kv.delete(['keys', key]);
+    await logError(kv, "Expired key activation attempt", req, '/activate');
+    return jsonResponse({ error: 'Key has expired' }, 410);
+  }
+  
+  if (!keyData.workink_completed) {
+    await logError(kv, "Unverified key activation attempt", req, '/activate');
+    return jsonResponse({ error: 'Key not verified' }, 401);
+  }
 
-        // Generate script token with 24 hour expiry
-        const scriptToken = generateToken();
-        const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-        
-        // Store script token with user info
-        await kv.set(['token', scriptToken], {
-          user_id: discord_id,
-          username: sanitizedUsername,
-          expires_at: tokenExpiresAt,
-          created_at: Date.now(),
-          key: key,
-          activation_ip: keyData.workink_data.ip
-        });
+  if (keyData.activated) {
+    return jsonResponse({ 
+      error: 'Key already activated',
+      activation_data: keyData.activation_data
+    }, 409);
+  }
 
-        // Activate the key with user info
-        keyData.activated = true;
-        keyData.script_token = scriptToken;
-        keyData.activation_data = {
-          ip: keyData.workink_data.ip,
-          discord_id: discord_id,
-          discord_username: sanitizedUsername,
-          activated_at: Date.now()
-        };
-        
-        await kv.set(['keys', key], keyData);
-        metrics.successfulActivations++;
+  // Generate script token with 24 hour expiry
+  const scriptToken = generateToken();
+  const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+  
+  // Store script token with user info
+  await kv.set(['token', scriptToken], {
+    user_id: discord_id,
+    username: sanitizedUsername,
+    expires_at: tokenExpiresAt,
+    created_at: Date.now(),
+    key: key,
+    activation_ip: keyData.workink_data.ip
+  });
 
-        return jsonResponse({
-          success: true,
-          key: key,
-          script_token: scriptToken,
-          script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
-          token_expires_at: new Date(tokenExpiresAt).toISOString(),
-          activation_data: keyData.activation_data,
-          message: 'Key activated successfully'
-        });
-      }
+  // Activate the key with user info
+  keyData.activated = true;
+  keyData.script_token = scriptToken;
+  keyData.activation_data = {
+    ip: keyData.workink_data.ip,
+    discord_id: discord_id,
+    discord_username: sanitizedUsername,
+    activated_at: Date.now()
+  };
+  
+  await kv.set(['keys', key], keyData);
+  metrics.successfulActivations++;
+
+  return jsonResponse({
+    success: true,
+    key: key,
+    script_token: scriptToken,
+    script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
+    token_expires_at: new Date(tokenExpiresAt).toISOString(),
+    activation_data: keyData.activation_data,
+    message: 'Key activated successfully'
+  });
+}
 
       // Check key status
       if (url.pathname === '/check-key' && req.method === 'GET') {
