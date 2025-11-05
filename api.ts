@@ -47,13 +47,15 @@ interface BlacklistEntry {
   identifiers: string[]; // All tracked identifiers
 }
 
-// User Session System
+// User Session Management
+// Enhanced User Session with linked Discord IDs
 interface UserSession {
   ip: string;
   user_agent: string;
   last_active: number;
   current_key?: string;
-  keys_generated: string[]; // History of keys
+  keys_generated: string[];
+  linked_discord_ids: string[]; // Track Discord IDs that used this session
 }
 
 // Your script content - Lunith branding
@@ -97,7 +99,7 @@ function parseDuration(durationStr: string): number | null {
 function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any): string[] {
   const identifiers: string[] = [];
   
-  // Always track these
+  // Always track these core identifiers
   if (discordId && discordId !== 'unknown') identifiers.push(`discord:${discordId}`);
   if (ip && ip !== 'unknown') identifiers.push(`ip:${ip}`);
   if (userAgent && userAgent !== 'unknown') identifiers.push(`user_agent:${userAgent}`);
@@ -110,16 +112,28 @@ function getAllIdentifiers(discordId: string, ip: string, userAgent: string, key
     identifiers.push(`vmac:${keyData.activation_data.vmac}`);
   }
   
+  // Add session-based identifiers
+  if (keyData?.workink_data?.session_id) {
+    identifiers.push(`session:${keyData.workink_data.session_id}`);
+  }
+  
   return identifiers;
 }
 
 // Enhanced blacklist check - checks all identifiers
+// Enhanced blacklist check with admin bypass and comprehensive checking
 async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAgent: string, keyData?: any): Promise<{ 
   blacklisted: boolean; 
   entry?: BlacklistEntry;
   matchedIdentifier?: string;
 }> {
   metrics.blacklistChecks++;
+  
+  // Admin bypass - check if this is a super admin
+  const SUPER_ADMINS = ['1084780906591559710']; // Your Discord ID
+  if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
+    return { blacklisted: false };
+  }
   
   const identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
   
@@ -146,6 +160,7 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
 }
 
 // Add to blacklist with all identifiers
+// Enhanced addToBlacklist function
 async function addToBlacklist(
   kv: Deno.Kv, 
   discordId: string, 
@@ -155,11 +170,29 @@ async function addToBlacklist(
   createdBy: string, 
   durationMs?: number,
   keyData?: any
-): Promise<{ success: boolean; identifiers: string[] }> {
+): Promise<{ success: boolean; identifiers: string[]; linked_sessions: number }> {
   const now = Date.now();
   const expires_at = durationMs ? now + durationMs : undefined;
   
-  const identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
+  let identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
+  
+  // Find and add all sessions linked to this Discord ID
+  const linkedSessions = await findUserSessions(kv, discordId);
+  let sessionCount = 0;
+  
+  for (const session of linkedSessions) {
+    // Add session IP to blacklist
+    if (session.ip && session.ip !== 'unknown') {
+      identifiers.push(`ip:${session.ip}`);
+    }
+    // Add session identifier
+    const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
+    identifiers.push(`session:${sessionId}`);
+    sessionCount++;
+  }
+  
+  // Remove duplicates
+  identifiers = [...new Set(identifiers)];
   
   const entry: BlacklistEntry = {
     discord_id: discordId,
@@ -180,7 +213,11 @@ async function addToBlacklist(
   // Also store main entry for management
   await kv.set(["blacklist", "entries", discordId], entry);
   
-  return { success: true, identifiers };
+  return { 
+    success: true, 
+    identifiers,
+    linked_sessions: sessionCount
+  };
 }
 
 // Remove from blacklist (whitelist)
@@ -223,7 +260,7 @@ async function getBlacklistEntry(kv: Deno.Kv, discordId: string): Promise<Blackl
   return entry.value as BlacklistEntry || null;
 }
 
-// User Session Management
+// Enhanced session management
 async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promise<UserSession> {
   const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
   const entry = await kv.get(["sessions", sessionId]);
@@ -241,14 +278,16 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
     ip,
     user_agent: userAgent,
     last_active: Date.now(),
-    keys_generated: []
+    keys_generated: [],
+    linked_discord_ids: []
   };
   
   await kv.set(["sessions", sessionId], newSession);
   return newSession;
 }
 
-async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string): Promise<UserSession> {
+// Enhanced session update with Discord ID tracking
+async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string, discordId?: string): Promise<UserSession> {
   const session = await getUserSession(kv, ip, userAgent);
   
   if (newKey) {
@@ -260,10 +299,32 @@ async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, new
     }
   }
   
+  // Track Discord ID if provided and not already tracked
+  if (discordId && !session.linked_discord_ids.includes(discordId)) {
+    session.linked_discord_ids.push(discordId);
+    // Keep only last 5 Discord IDs
+    if (session.linked_discord_ids.length > 5) {
+      session.linked_discord_ids = session.linked_discord_ids.slice(-5);
+    }
+  }
+  
   const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
   await kv.set(["sessions", sessionId], session);
   
   return session;
+}
+
+async function findUserSessions(kv: Deno.Kv, discordId: string): Promise<UserSession[]> {
+  const sessions: UserSession[] = [];
+  
+  for await (const entry of kv.list({ prefix: ["sessions"] })) {
+    const session = entry.value as UserSession;
+    if (session.linked_discord_ids.includes(discordId)) {
+      sessions.push(session);
+    }
+  }
+  
+  return sessions;
 }
 
 // Enhanced HTML with User Panel - Fixed template literals
@@ -1205,17 +1266,43 @@ function monitorPerformance() {
 }
 
 // Enhanced WorkInk endpoint with session tracking and blacklist checks
+// Enhanced WorkInk endpoint with comprehensive blacklist checks
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string) {
-  // Check blacklist first
+  // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
+    await logError(kv, `Blacklisted connection attempted key generation: ${clientIP}`, req, '/workink');
     return jsonResponse({ 
       error: "Access denied. Your connection is blacklisted.",
-      reason: blacklistCheck.entry?.reason 
+      reason: blacklistCheck.entry?.reason,
+      matched_identifier: blacklistCheck.matchedIdentifier
     }, 403);
   }
   
   const session = await getUserSession(kv, clientIP, userAgent);
+  
+  // If session has previous keys, check if any were activated by blacklisted users
+  if (session.keys_generated.length > 0) {
+    for (const key of session.keys_generated) {
+      const keyEntry = await kv.get(["keys", key]);
+      if (keyEntry.value && keyEntry.value.activated) {
+        const discordId = keyEntry.value.activation_data?.discord_id;
+        if (discordId) {
+          // Check if this Discord ID is blacklisted
+          const userBlacklistCheck = await isBlacklisted(kv, discordId, 'unknown', 'unknown');
+          if (userBlacklistCheck.blacklisted) {
+            await logError(kv, `Session with blacklisted user attempted key generation: ${discordId}`, req, '/workink');
+            return jsonResponse({ 
+              error: "Access denied. Your session is linked to a blacklisted account.",
+              reason: userBlacklistCheck.entry?.reason,
+              linked_user: discordId
+            }, 403);
+          }
+        }
+      }
+    }
+  }
+  
   const key = generateFormattedKey();
   const expiresAt = Date.now() + KEY_EXPIRY_MS;
   
@@ -1624,6 +1711,7 @@ export async function handler(req: Request): Promise<Response> {
 
   // Activate the key with user info
   keyData.activated = true;
+  await updateUserSession(kv, keyData.workink_data.ip, keyData.workink_data.user_agent, undefined, discord_id);
   keyData.script_token = scriptToken;
   keyData.activation_data = {
     ip: keyData.workink_data.ip,
