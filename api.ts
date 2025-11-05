@@ -2,6 +2,7 @@
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
+const SUPER_ADMINS = ['']; 
 
 // Rate limiting configuration
 const RATE_LIMIT = {
@@ -120,7 +121,6 @@ function getAllIdentifiers(discordId: string, ip: string, userAgent: string, key
   return identifiers;
 }
 
-// Enhanced blacklist check - checks all identifiers
 // Enhanced blacklist check with admin bypass and comprehensive checking
 async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAgent: string, keyData?: any): Promise<{ 
   blacklisted: boolean; 
@@ -129,8 +129,7 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
 }> {
   metrics.blacklistChecks++;
   
-  // Admin bypass - check if this is a super admin
-  const SUPER_ADMINS = ['1084780906591559710']; // Your Discord ID
+  // Your Discord ID
   if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
     return { blacklisted: false };
   }
