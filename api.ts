@@ -1,4 +1,4 @@
-// api.ts - Updated with Lunith branding
+// api.ts - Professional Lunith branding
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
@@ -8,51 +8,115 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
-// Your script content - Updated to Lunith
-const SCRIPT_CONTENT = `print("Hello from Lunith Hub!")
+// Your script content - Lunith branding
+const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
 
--- Your main script logic here
+-- Main script logic
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 if LocalPlayer then
-    print("Lunith Hub loaded for player:", LocalPlayer.Name)
+    print("Lunith loaded for:", LocalPlayer.Name)
 end
 
-return "Lunith Hub loaded successfully"`;
+return "Lunith loaded successfully"`;
 
-// HTML for key.napsy.dev (Key System) - Lunith branding
+// HTML for key.napsy.dev - Clean professional design
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Lunith - Key Activation</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #1a1a1a; color: white; }
-        .container { background: #2d2d2d; padding: 30px; border-radius: 10px; border: 1px solid #444; }
-        button { padding: 12px; margin: 10px 0; border: none; border-radius: 5px; width: 100%; box-sizing: border-box; background: #7289da; color: white; cursor: pointer; font-weight: bold; }
-        button:hover { background: #5b73c4; }
-        button:disabled { background: #555; cursor: not-allowed; }
-        .key-display { background: #1a1a1a; padding: 15px; border-radius: 5px; margin: 10px 0; font-family: monospace; word-break: break-all; }
-        .success { color: #43b581; border-left: 4px solid #43b581; padding-left: 10px; }
-        .error { color: #f04747; border-left: 4px solid #f04747; padding-left: 10px; }
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            max-width: 600px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            background: #0f0f0f; 
+            color: #e0e0e0; 
+            line-height: 1.6;
+        }
+        .container { 
+            background: #1a1a1a; 
+            padding: 30px; 
+            border-radius: 8px; 
+            border: 1px solid #333; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 { 
+            color: #7289da; 
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        button { 
+            padding: 14px; 
+            margin: 15px 0; 
+            border: none; 
+            border-radius: 6px; 
+            width: 100%; 
+            box-sizing: border-box; 
+            background: #7289da; 
+            color: white; 
+            cursor: pointer; 
+            font-weight: 600;
+            font-size: 16px;
+            transition: background 0.2s;
+        }
+        button:hover { 
+            background: #5b73c4; 
+        }
+        button:disabled { 
+            background: #444; 
+            cursor: not-allowed; 
+        }
+        .key-display { 
+            background: #0f0f0f; 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin: 15px 0; 
+            font-family: 'Courier New', monospace; 
+            word-break: break-all;
+            border: 1px solid #333;
+            font-size: 14px;
+        }
+        .success { 
+            color: #43b581; 
+            padding: 10px;
+            background: rgba(67, 181, 129, 0.1);
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .error { 
+            color: #f04747; 
+            padding: 10px;
+            background: rgba(240, 71, 71, 0.1);
+            border-radius: 4px;
+            margin: 10px 0;
+        }
         .hidden { display: none; }
+        .info-text {
+            color: #888;
+            font-size: 14px;
+            margin: 5px 0;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🔑 Lunith Key System</h1>
-        <p>Complete the WorkInk verification to get your activation key.</p>
+        <h1>Lunith Key System</h1>
+        <p>Complete the verification process to generate your activation key.</p>
         
         <div id="workinkSection">
-            <button onclick="startWorkInk()" id="workinkBtn">Start WorkInk Verification</button>
+            <button onclick="startWorkInk()" id="workinkBtn">Begin Verification</button>
+            <p class="info-text">This will generate a unique key tied to your connection.</p>
         </div>
         
         <div id="keySection" class="hidden">
-            <div class="success">✅ WorkInk completed! Your key:</div>
-            <div class="key-display" id="generatedKey">Loading...</div>
-            <button onclick="copyKey()">Copy Key</button>
-            <p><small>Use this key in our Discord bot to get your loader.</small></p>
+            <div class="success">Verification complete! Your key has been generated:</div>
+            <div class="key-display" id="generatedKey">Generating...</div>
+            <button onclick="copyKey()">Copy Key to Clipboard</button>
+            <p class="info-text">Use this key in our Discord server with the !activate command to receive your loader.</p>
         </div>
     </div>
 
@@ -60,7 +124,7 @@ const keySiteHtml = `<!DOCTYPE html>
         async function startWorkInk() {
             const btn = document.getElementById('workinkBtn');
             btn.disabled = true;
-            btn.textContent = 'Verifying...';
+            btn.textContent = 'Processing...';
             
             try {
                 const response = await fetch('/workink', { method: 'POST' });
@@ -73,49 +137,78 @@ const keySiteHtml = `<!DOCTYPE html>
                 } else {
                     alert('Error: ' + result.error);
                     btn.disabled = false;
-                    btn.textContent = 'Start WorkInk Verification';
+                    btn.textContent = 'Begin Verification';
                 }
             } catch (error) {
                 alert('Network error: ' + error.message);
                 btn.disabled = false;
-                btn.textContent = 'Start WorkInk Verification';
+                btn.textContent = 'Begin Verification';
             }
         }
         
         function copyKey() {
             const key = document.getElementById('generatedKey').textContent;
             navigator.clipboard.writeText(key).then(() => {
-                alert('Key copied to clipboard!');
+                alert('Key copied to clipboard successfully.');
             });
         }
     </script>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev (API Health/Info) - Lunith branding
+// HTML for api.napsy.dev - Clean professional design
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <title>Lunith API</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; text-align: center; background: #1a1a1a; color: white; }
-        .container { background: #2d2d2d; padding: 40px; border-radius: 10px; border: 1px solid #444; }
-        h1 { color: #7289da; }
-        .status { color: #43b581; font-weight: bold; }
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            max-width: 800px; 
+            margin: 50px auto; 
+            padding: 20px; 
+            text-align: center; 
+            background: #0f0f0f; 
+            color: #e0e0e0; 
+        }
+        .container { 
+            background: #1a1a1a; 
+            padding: 40px; 
+            border-radius: 8px; 
+            border: 1px solid #333; 
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        h1 { 
+            color: #7289da; 
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .status { 
+            color: #43b581; 
+            font-weight: 600;
+            margin: 20px 0;
+        }
+        a {
+            color: #7289da;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Lunith API</h1>
-        <p class="status">✅ Status: Online</p>
+        <h1>Lunith API</h1>
+        <p class="status">Status: Online</p>
         <p>Secure script delivery service</p>
-        <p><a href="https://key.napsy.dev" style="color: #7289da;">Get your activation key →</a></p>
+        <p><a href="https://key.napsy.dev">Get your activation key</a></p>
     </div>
 </body>
 </html>`;
 
-// Utility functions (same as before)
+// Utility functions remain the same
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -151,7 +244,7 @@ function getClientIP(req: Request): string {
   return cfConnectingIP || xForwardedFor?.split(',')[0] || 'unknown';
 }
 
-// Main handler - Updated activation tracking
+// Main handler remains the same as previous version
 export async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const hostname = url.hostname;
@@ -162,7 +255,7 @@ export async function handler(req: Request): Promise<Response> {
   }
 
   try {
-    // 🔑 KEY.NAPSY.DEV - Key System
+    // KEY.NAPSY.DEV - Key System
     if (hostname === 'key.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(keySiteHtml, { 
@@ -192,7 +285,7 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({
           success: true,
           key: key,
-          message: "WorkInk completed successfully"
+          message: "Verification completed successfully"
         });
       }
 
@@ -207,7 +300,7 @@ export async function handler(req: Request): Promise<Response> {
       return new Response("Not found", { status: 404 });
     }
 
-    // 🚀 API.NAPSY.DEV - Script API
+    // API.NAPSY.DEV - Script API
     if (hostname === 'api.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(apiSiteHtml, {
@@ -246,13 +339,13 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // Key activation (Discord bot only) - Updated with user tracking
+      // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
         const body = await req.json();
-        const { key, discord_id, discord_username } = body; // Added discord_username
+        const { key, discord_id, discord_username } = body;
         
         if (!key || !discord_id) {
-          return jsonResponse({ error: 'Key and discord_id required' }, 400);
+          return jsonResponse({ error: 'Key and discord_id required' }, 400 );
         }
 
         const kv = await Deno.openKv();
@@ -267,7 +360,7 @@ export async function handler(req: Request): Promise<Response> {
         
         if (!keyData.workink_completed) {
           await kv.close();
-          return jsonResponse({ error: 'Key not verified with WorkInk' }, 401);
+          return jsonResponse({ error: 'Key not verified' }, 401);
         }
 
         if (keyData.activated) {
@@ -285,7 +378,7 @@ export async function handler(req: Request): Promise<Response> {
         // Store script token with user info
         await kv.set(['token', scriptToken], {
           user_id: discord_id,
-          username: discord_username || 'Unknown', // Store username
+          username: discord_username || 'Unknown',
           expires_at: expiresAt,
           created_at: Date.now(),
           key: key,
@@ -298,7 +391,7 @@ export async function handler(req: Request): Promise<Response> {
         keyData.activation_data = {
           ip: keyData.workink_data.ip,
           discord_id: discord_id,
-          discord_username: discord_username || 'Unknown', // Store who activated it
+          discord_username: discord_username || 'Unknown',
           activated_at: Date.now()
         };
         
@@ -315,7 +408,7 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // Check key status - Now shows who activated it
+      // Check key status
       if (url.pathname === '/check-key' && req.method === 'GET') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
         if (apiKey !== ADMIN_API_KEY) {
