@@ -1019,43 +1019,48 @@ const keySiteHtml = `<!DOCTYPE html>
         }
         
         // Renew key function
-        async function renewKey() {
-            const btn = document.getElementById('renewBtn');
-            const originalText = btn.textContent;
-            
-            btn.disabled = true;
-            btn.textContent = 'Renewing...';
-            
-            try {
-                const response = await fetch('/renew', { method: 'POST' });
-                const result = await response.json();
-                
-                if (result.success) {
-                    // Update UI with new key
-                    document.getElementById('panelCurrentKey').textContent = result.key;
-                    document.getElementById('keyStatus').textContent = 'Not Activated';
-                    document.getElementById('keyExpiry').textContent = new Date(result.expires_at).toLocaleString();
-                    document.getElementById('panelKeyStatus').textContent = 'Active';
-                    
-                    // Auto-copy new key
-                    navigator.clipboard.writeText(result.key).then(() => {
-                        btn.textContent = '✓ Renewed & Copied';
-                        setTimeout(() => {
-                            btn.textContent = 'Renew Key';
-                            btn.disabled = true; // Disable until expired again
-                        }, 2000);
-                    });
-                } else {
-                    alert('Renew failed: ' + result.error);
-                    btn.disabled = false;
-                    btn.textContent = originalText;
-                }
-            } catch (error) {
-                alert('Network error: ' + error.message);
-                btn.disabled = false;
-                btn.textContent = originalText;
-            }
-        }
+       async function renewKey() {
+  const btn = document.getElementById('renewBtn');
+  const originalText = btn.textContent;
+  
+  btn.disabled = true;
+  btn.textContent = 'Renewing...';
+  
+  try {
+    const response = await fetch('/renew', { method: 'POST' });
+    const result = await response.json();
+    
+    if (result.success) {
+      // Update UI with renewed key info (same key)
+      const newExpiry = new Date(result.expires_at);
+      document.getElementById('keyExpiry').textContent = newExpiry.toLocaleString();
+      document.getElementById('panelKeyStatus').textContent = 'Active';
+      
+      // Show renewal count if available
+      if (result.renewal_count) {
+        document.getElementById('keyStatus').textContent = 
+          `Activated • Renewed ${result.renewal_count} times`;
+      }
+      
+      // Auto-copy the same key
+      navigator.clipboard.writeText(result.key).then(() => {
+        btn.textContent = '✓ Renewed & Copied';
+        setTimeout(() => {
+          btn.textContent = 'Renew Key';
+          btn.disabled = true; // Disable until expired again
+        }, 2000);
+      });
+    } else {
+      alert('Renew failed: ' + result.error);
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  } catch (error) {
+    alert('Network error: ' + error.message);
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
         
         // Copy panel key
         function copyPanelKey() {
@@ -1574,7 +1579,7 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
 
 // Renew key system - only allow renewal when current key is expired
 async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
-  // Check blacklist first - FIXED: Now checks blacklist for renew too
+  // Check blacklist first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
     return jsonResponse({ 
@@ -1600,39 +1605,90 @@ async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req
     }, 400);
   }
   
-  // Generate new key
-  const key = generateFormattedKey();
-  const expiresAt = Date.now() + KEY_EXPIRY_MS;
+  const currentKey = session.current_key;
+  const keyEntry = await kv.get(["keys", currentKey]);
+  const keyData = keyEntry.value;
   
-  const keyData = {
-    key,
-    created_at: Date.now(),
-    expires_at: expiresAt,
-    activated: false,
-    workink_completed: true,
-    workink_data: {
-      ip: clientIP,
-      user_agent: userAgent,
-      completed_at: Date.now(),
-      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
-      is_renewal: true,
-      previous_key: session.current_key,
-      privacy_agreed: session.privacy_agreed,
-      age_verified: session.age_verified
+  if (!keyData) {
+    return jsonResponse({ 
+      error: "Key data not found. Please generate a new key." 
+    }, 404);
+  }
+  
+  // Reset expiration dates
+  const newExpiresAt = Date.now() + KEY_EXPIRY_MS;
+  keyData.expires_at = newExpiresAt;
+  
+  // If key was activated, also reset the token expiration
+  if (keyData.activated && keyData.script_token) {
+    const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+    
+    // Update token expiration
+    const tokenEntry = await kv.get(["token", keyData.script_token]);
+    if (tokenEntry.value) {
+      const tokenData = tokenEntry.value;
+      tokenData.expires_at = tokenExpiresAt;
+      await kv.set(["token", keyData.script_token], tokenData);
     }
+    
+    keyData.activation_data.token_reset_at = Date.now();
+    keyData.activation_data.new_token_expires_at = tokenExpiresAt;
+  }
+  
+  // Update key data with renewal info
+  keyData.renewed_at = Date.now();
+  keyData.renewal_count = (keyData.renewal_count || 0) + 1;
+  keyData.workink_data.last_renewal = {
+    ip: clientIP,
+    user_agent: userAgent,
+    renewed_at: Date.now()
   };
   
-  await kv.set(["keys", key], keyData);
-  await updateUserSession(kv, clientIP, userAgent, key);
+  await kv.set(["keys", currentKey], keyData);
   metrics.refills++;
   
   return jsonResponse({
     success: true,
-    key: key,
-    expires_at: new Date(expiresAt).toISOString(),
+    key: currentKey, // Same key, not a new one
+    expires_at: new Date(newExpiresAt).toISOString(),
     is_renewal: true,
-    previous_key: session.current_key,
-    message: "Key renewed successfully"
+    renewal_count: keyData.renewal_count,
+    message: "Key renewed successfully - expiration reset to 24 hours"
+  });
+}
+
+// Update the user panel to show renewal info
+async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string) {
+  const session = await getUserSession(kv, clientIP, userAgent);
+  const currentKey = session.current_key;
+  
+  let keyInfo = null;
+  if (currentKey) {
+    const keyEntry = await kv.get(["keys", currentKey]);
+    if (keyEntry.value) {
+      keyInfo = keyEntry.value;
+    }
+  }
+  
+  return jsonResponse({
+    success: true,
+    session: {
+      ip: session.ip,
+      keys_generated: session.keys_generated.length,
+      last_active: session.last_active,
+      current_key: session.current_key,
+      privacy_agreed: session.privacy_agreed,
+      age_verified: session.age_verified
+    },
+    current_key: keyInfo ? {
+      key: keyInfo.key,
+      activated: keyInfo.activated,
+      created_at: keyInfo.created_at,
+      expires_at: keyInfo.expires_at,
+      renewed_at: keyInfo.renewed_at,
+      renewal_count: keyInfo.renewal_count || 0
+    } : null,
+    can_renew: keyInfo ? keyInfo.expires_at < Date.now() : false
   });
 }
 
@@ -1959,12 +2015,47 @@ export async function handler(req: Request): Promise<Response> {
           return jsonResponse({ error: 'Key not verified' }, 401);
         }
 
-        if (keyData.activated) {
-          return jsonResponse({ 
-            error: 'Key already activated',
-            activation_data: keyData.activation_data
-          }, 409);
-        }
+        // In the activation endpoint, add token renewal support
+if (keyData.activated) {
+  // Check if this is a renewal of an activated key
+  if (keyData.expires_at < Date.now()) {
+    // Renew the token for an expired but previously activated key
+    const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+    
+    // Update token expiration
+    if (keyData.script_token) {
+      const tokenEntry = await kv.get(["token", keyData.script_token]);
+      if (tokenEntry.value) {
+        const tokenData = tokenEntry.value;
+        tokenData.expires_at = tokenExpiresAt;
+        await kv.set(["token", keyData.script_token], tokenData);
+      }
+    }
+    
+    // Reset key expiration
+    keyData.expires_at = Date.now() + KEY_EXPIRY_MS;
+    keyData.renewed_at = Date.now();
+    keyData.renewal_count = (keyData.renewal_count || 0) + 1;
+    
+    await kv.set(['keys', key], keyData);
+    
+    return jsonResponse({
+      success: true,
+      key: key,
+      script_token: keyData.script_token,
+      script_url: `https://api.napsy.dev/scripts/${keyData.script_token}`,
+      token_expires_at: new Date(tokenExpiresAt).toISOString(),
+      activation_data: keyData.activation_data,
+      is_renewal: true,
+      message: 'Key renewed and token reactivated successfully'
+    });
+  } else {
+    return jsonResponse({ 
+      error: 'Key already activated',
+      activation_data: keyData.activation_data
+    }, 409);
+  }
+}
 
         // Generate script token with 24 hour expiry
         const scriptToken = generateToken();
