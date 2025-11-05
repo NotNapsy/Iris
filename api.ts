@@ -317,11 +317,28 @@ async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, new
 async function findUserSessions(kv: Deno.Kv, discordId: string): Promise<UserSession[]> {
   const sessions: UserSession[] = [];
   
-  for await (const entry of kv.list({ prefix: ["sessions"] })) {
-    const session = entry.value as UserSession;
-    if (session.linked_discord_ids.includes(discordId)) {
-      sessions.push(session);
+  try {
+    for await (const entry of kv.list({ prefix: ["sessions"] })) {
+      // Add null/undefined check and type validation
+      if (!entry.value) {
+        console.warn('Skipping undefined session entry:', entry.key);
+        continue;
+      }
+      
+      const session = entry.value as UserSession;
+      
+      // Validate session structure and ensure linked_discord_ids exists
+      if (!session.linked_discord_ids || !Array.isArray(session.linked_discord_ids)) {
+        console.warn('Session missing linked_discord_ids:', entry.key);
+        continue;
+      }
+      
+      if (session.linked_discord_ids.includes(discordId)) {
+        sessions.push(session);
+      }
     }
+  } catch (error) {
+    console.error('Error finding user sessions:', error);
   }
   
   return sessions;
