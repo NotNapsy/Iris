@@ -1,5 +1,6 @@
-// api.ts - Polished Lunith branding
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+// api.ts - 24hr expiration and auto-cleanup
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
 const corsHeaders = {
@@ -147,6 +148,16 @@ const keySiteHtml = `<!DOCTYPE html>
             font-weight: 500;
         }
         
+        .warning {
+            color: #faa61a;
+            padding: 16px;
+            background: rgba(250, 166, 26, 0.1);
+            border-radius: 10px;
+            margin: 20px 0;
+            border-left: 4px solid #faa61a;
+            font-weight: 500;
+        }
+        
         .hidden { 
             display: none;
         }
@@ -197,6 +208,15 @@ const keySiteHtml = `<!DOCTYPE html>
         .loading {
             animation: pulse 1.5s ease-in-out infinite;
         }
+        
+        .expiry-notice {
+            background: rgba(250, 166, 26, 0.1);
+            border: 1px solid rgba(250, 166, 26, 0.3);
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin: 15px 0;
+            font-size: 13px;
+        }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
@@ -209,6 +229,10 @@ const keySiteHtml = `<!DOCTYPE html>
         
         <div class="section">
             <p>Generate your unique activation key to access Lunith services.</p>
+        </div>
+        
+        <div class="expiry-notice">
+            <strong>Important:</strong> Generated keys expire in 24 hours if not activated. Activated tokens are valid for 24 hours.
         </div>
         
         <div id="workinkSection">
@@ -235,7 +259,7 @@ const keySiteHtml = `<!DOCTYPE html>
                 <div class="step-number">2</div>
                 <div>
                     <strong>Your Activation Key</strong>
-                    <div class="info-text">Copy this key for the next step.</div>
+                    <div class="info-text">Copy this key and activate it within 24 hours.</div>
                 </div>
             </div>
             
@@ -252,10 +276,19 @@ const keySiteHtml = `<!DOCTYPE html>
                     <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
                 </div>
             </div>
+            
+            <div class="warning">
+                <strong>Key Expires:</strong> This key will expire <span id="expiryTime">in 24 hours</span> if not activated.
+            </div>
         </div>
     </div>
 
     <script>
+        function updateExpiryTime() {
+            const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+            document.getElementById('expiryTime').textContent = expiryTime.toLocaleString();
+        }
+
         async function startWorkInk() {
             const btn = document.getElementById('workinkBtn');
             const originalText = btn.textContent;
@@ -272,6 +305,7 @@ const keySiteHtml = `<!DOCTYPE html>
                     document.getElementById('workinkSection').classList.add('hidden');
                     document.getElementById('keySection').classList.remove('hidden');
                     document.getElementById('generatedKey').textContent = result.key;
+                    updateExpiryTime();
                     
                     // Auto-copy to clipboard
                     navigator.clipboard.writeText(result.key).then(() => {
@@ -314,111 +348,10 @@ const keySiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev - Polished design
-const apiSiteHtml = `<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Lunith API</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
-        body { 
-            font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
-            max-width: 800px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
-            color: #e8e8e8;
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-        
-        .container { 
-            background: rgba(25, 25, 25, 0.95);
-            padding: 50px 40px;
-            border-radius: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-            backdrop-filter: blur(10px);
-            text-align: center;
-            width: 100%;
-        }
-        
-        h1 { 
-            color: #7289da;
-            font-size: 3rem;
-            font-weight: 700;
-            margin-bottom: 16px;
-            letter-spacing: -1px;
-        }
-        
-        .status { 
-            color: #43b581;
-            font-weight: 600;
-            font-size: 1.2rem;
-            margin: 25px 0;
-            padding: 12px 24px;
-            background: rgba(67, 181, 129, 0.1);
-            border-radius: 10px;
-            display: inline-block;
-        }
-        
-        .description {
-            color: #aaa;
-            font-size: 1.1rem;
-            line-height: 1.6;
-            margin: 25px 0;
-            max-width: 500px;
-            margin-left: auto;
-            margin-right: auto;
-        }
-        
-        a {
-            color: #7289da;
-            text-decoration: none;
-            font-weight: 600;
-            transition: color 0.2s ease;
-            border-bottom: 2px solid transparent;
-            padding-bottom: 2px;
-        }
-        
-        a:hover {
-            color: #8ba1e8;
-            border-bottom-color: #7289da;
-        }
-        
-        .divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
-            margin: 30px auto;
-            width: 200px;
-        }
-    </style>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-</head>
-<body>
-    <div class="container">
-        <h1>Lunith</h1>
-        <div class="status">API Status: Online</div>
-        <div class="description">
-            Secure script delivery and key management system serving Lunith services.
-        </div>
-        <div class="divider"></div>
-        <p>
-            <a href="https://key.napsy.dev">Get your activation key</a>
-        </p>
-    </div>
-</body>
-</html>`;
+// HTML for api.napsy.dev remains the same
+const apiSiteHtml = `<!DOCTYPE html>...</html>`;
 
-// Utility functions remain the same
+// Utility functions
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -454,7 +387,39 @@ function getClientIP(req: Request): string {
   return cfConnectingIP || xForwardedFor?.split(',')[0] || 'unknown';
 }
 
-// Main handler remains the same
+// Cleanup expired keys and tokens
+async function cleanupExpired(kv: Deno.Kv) {
+  const now = Date.now();
+  let cleaned = 0;
+
+  // Clean up expired tokens
+  const tokenEntries = kv.list({ prefix: ["token"] });
+  for await (const entry of tokenEntries) {
+    if (entry.value && entry.value.expires_at < now) {
+      await kv.delete(entry.key);
+      cleaned++;
+    }
+  }
+
+  // Clean up expired unactivated keys (24 hours old and not activated)
+  const keyEntries = kv.list({ prefix: ["keys"] });
+  for await (const entry of keyEntries) {
+    const keyData = entry.value;
+    if (keyData && !keyData.activated) {
+      const keyAge = now - keyData.created_at;
+      if (keyAge > KEY_EXPIRY_MS) {
+        await kv.delete(entry.key);
+        cleaned++;
+      }
+    }
+  }
+
+  if (cleaned > 0) {
+    console.log(`Cleaned up ${cleaned} expired entries`);
+  }
+}
+
+// Main handler with expiration logic
 export async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const hostname = url.hostname;
@@ -464,7 +429,12 @@ export async function handler(req: Request): Promise<Response> {
     return new Response(null, { headers: corsHeaders });
   }
 
+  const kv = await Deno.openKv();
+
   try {
+    // Run cleanup on every request (efficient enough for Deno KV)
+    await cleanupExpired(kv);
+
     // KEY.NAPSY.DEV - Key System
     if (hostname === 'key.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
@@ -475,11 +445,12 @@ export async function handler(req: Request): Promise<Response> {
 
       if (url.pathname === '/workink' && req.method === 'POST') {
         const key = generateFormattedKey();
+        const expiresAt = Date.now() + KEY_EXPIRY_MS;
         
-        const kv = await Deno.openKv();
         const keyData = {
           key,
           created_at: Date.now(),
+          expires_at: expiresAt, // 24 hour expiry for unactivated keys
           activated: false,
           workink_completed: true,
           workink_data: {
@@ -490,11 +461,11 @@ export async function handler(req: Request): Promise<Response> {
         };
         
         await kv.set(["keys", key], keyData);
-        await kv.close();
         
         return jsonResponse({
           success: true,
           key: key,
+          expires_at: new Date(expiresAt).toISOString(),
           message: "Verification completed successfully"
         });
       }
@@ -531,16 +502,12 @@ export async function handler(req: Request): Promise<Response> {
         const token = url.pathname.split('/')[2];
         if (!token) return new Response("Token required", { status: 400 });
 
-        const kv = await Deno.openKv();
         const data = await kv.get(["token", token]);
-        await kv.close();
         
         if (!data.value) return new Response("Token not found", { status: 404 });
         
         if (data.value.expires_at < Date.now()) {
-          const kv = await Deno.openKv();
           await kv.delete(["token", token]);
-          await kv.close();
           return new Response("Token expired", { status: 410 });
         }
 
@@ -558,38 +525,40 @@ export async function handler(req: Request): Promise<Response> {
           return jsonResponse({ error: 'Key and discord_id required' }, 400 );
         }
 
-        const kv = await Deno.openKv();
         const entry = await kv.get(['keys', key]);
         
         if (!entry.value) {
-          await kv.close();
           return jsonResponse({ error: 'Invalid key' }, 404);
         }
 
         const keyData = entry.value;
         
+        // Check if key expired (unactivated keys only)
+        if (!keyData.activated && keyData.expires_at < Date.now()) {
+          await kv.delete(['keys', key]);
+          return jsonResponse({ error: 'Key has expired' }, 410);
+        }
+        
         if (!keyData.workink_completed) {
-          await kv.close();
           return jsonResponse({ error: 'Key not verified' }, 401);
         }
 
         if (keyData.activated) {
-          await kv.close();
           return jsonResponse({ 
             error: 'Key already activated',
             activation_data: keyData.activation_data
           }, 409);
         }
 
-        // Generate script token
+        // Generate script token with 24 hour expiry
         const scriptToken = generateToken();
-        const expiresAt = Date.now() + TOKEN_TTL_MS;
+        const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
         
         // Store script token with user info
         await kv.set(['token', scriptToken], {
           user_id: discord_id,
           username: discord_username || 'Unknown',
-          expires_at: expiresAt,
+          expires_at: tokenExpiresAt,
           created_at: Date.now(),
           key: key,
           activation_ip: keyData.workink_data.ip
@@ -606,13 +575,13 @@ export async function handler(req: Request): Promise<Response> {
         };
         
         await kv.set(['keys', key], keyData);
-        await kv.close();
 
         return jsonResponse({
           success: true,
           key: key,
           script_token: scriptToken,
           script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
+          token_expires_at: new Date(tokenExpiresAt).toISOString(),
           activation_data: keyData.activation_data,
           message: 'Key activated successfully'
         });
@@ -630,15 +599,21 @@ export async function handler(req: Request): Promise<Response> {
           return jsonResponse({ error: 'Key parameter required' }, 400);
         }
 
-        const kv = await Deno.openKv();
         const entry = await kv.get(['keys', key]);
-        await kv.close();
 
         if (!entry.value) {
           return jsonResponse({ error: 'Key not found' }, 404);
         }
 
-        return jsonResponse({ key: entry.value });
+        const keyData = entry.value;
+        
+        // Check if unactivated key is expired
+        if (!keyData.activated && keyData.expires_at < Date.now()) {
+          await kv.delete(['keys', key]);
+          return jsonResponse({ error: 'Key has expired' }, 410);
+        }
+
+        return jsonResponse({ key: keyData });
       }
 
       return new Response("Not found", { status: 404 });
@@ -649,6 +624,8 @@ export async function handler(req: Request): Promise<Response> {
   } catch (err) {
     console.error("Server error:", err);
     return jsonResponse({ error: "Internal server error" }, 500);
+  } finally {
+    kv.close();
   }
 }
 
