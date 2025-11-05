@@ -1,4 +1,4 @@
-// api.ts - Production ready with all enhancements
+// api.ts - Fixed version with all requirements
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
@@ -56,6 +56,8 @@ interface UserSession {
   current_key?: string;
   keys_generated: string[];
   linked_discord_ids: string[]; // Track Discord IDs that used this session
+  privacy_agreed: boolean; // Track if user agreed to privacy policy
+  age_verified: boolean; // Track if user verified age
 }
 
 // Your script content - Lunith branding
@@ -128,8 +130,8 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
 }> {
   metrics.blacklistChecks++;
   
-  // Admin bypass - REMOVED FOR TESTING - Add your ID back after testing
-  const SUPER_ADMINS: string[] = []; // Empty array for testing
+  // Admin bypass - ADD YOUR DISCORD ID HERE
+  const SUPER_ADMINS: string[] = ['YOUR_DISCORD_ID_HERE']; // Add your Discord ID
   
   if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
     return { blacklisted: false };
@@ -279,6 +281,12 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
     if (!session.keys_generated) {
       session.keys_generated = [];
     }
+    if (!session.privacy_agreed) {
+      session.privacy_agreed = false;
+    }
+    if (!session.age_verified) {
+      session.age_verified = false;
+    }
     
     // Update last active
     session.last_active = Date.now();
@@ -292,7 +300,9 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
     user_agent: userAgent,
     last_active: Date.now(),
     keys_generated: [],
-    linked_discord_ids: []
+    linked_discord_ids: [],
+    privacy_agreed: false,
+    age_verified: false
   };
   
   await kv.set(["sessions", sessionId], newSession);
@@ -300,25 +310,30 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
 }
 
 // Enhanced session update with Discord ID tracking
-async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string, discordId?: string): Promise<UserSession> {
+async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string, discordId?: string, privacyAgreed?: boolean, ageVerified?: boolean): Promise<UserSession> {
   const session = await getUserSession(kv, ip, userAgent);
   
   if (newKey) {
     session.current_key = newKey;
-    session.keys_generated.push(newKey);
-    // Keep only last 10 keys
-    if (session.keys_generated.length > 10) {
-      session.keys_generated = session.keys_generated.slice(-10);
-    }
+    // Only keep current key, remove history
+    session.keys_generated = [newKey];
   }
   
   // Track Discord ID if provided and not already tracked
   if (discordId && !session.linked_discord_ids.includes(discordId)) {
     session.linked_discord_ids.push(discordId);
-    // Keep only last 5 Discord IDs
-    if (session.linked_discord_ids.length > 5) {
-      session.linked_discord_ids = session.linked_discord_ids.slice(-5);
+    // Keep only last 1 Discord ID
+    if (session.linked_discord_ids.length > 1) {
+      session.linked_discord_ids = session.linked_discord_ids.slice(-1);
     }
+  }
+  
+  // Update privacy and age verification
+  if (privacyAgreed !== undefined) {
+    session.privacy_agreed = privacyAgreed;
+  }
+  if (ageVerified !== undefined) {
+    session.age_verified = ageVerified;
   }
   
   const sessionId = `session:${ip}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
@@ -357,7 +372,32 @@ async function findUserSessions(kv: Deno.Kv, discordId: string): Promise<UserSes
   return sessions;
 }
 
-// Enhanced HTML with User Panel - Fixed template literals
+// Check if current key is expired and can be renewed
+async function canRenewKey(kv: Deno.Kv, session: UserSession): Promise<{ canRenew: boolean; reason?: string; currentKeyData?: any }> {
+  if (!session.current_key) {
+    return { canRenew: false, reason: "No existing key found" };
+  }
+  
+  const keyEntry = await kv.get(["keys", session.current_key]);
+  if (!keyEntry.value) {
+    return { canRenew: false, reason: "Key not found in database" };
+  }
+  
+  const keyData = keyEntry.value;
+  
+  // Can only renew if key is expired
+  if (keyData.expires_at > Date.now()) {
+    return { 
+      canRenew: false, 
+      reason: "Current key is still valid",
+      currentKeyData: keyData
+    };
+  }
+  
+  return { canRenew: true, currentKeyData: keyData };
+}
+
+// Enhanced HTML with Privacy Policy and Age Verification
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -562,6 +602,62 @@ const keySiteHtml = `<!DOCTYPE html>
             font-size: 13px;
         }
         
+        /* Privacy Policy Styles */
+        .privacy-section {
+            background: rgba(30, 30, 30, 0.8);
+            border-radius: 12px;
+            padding: 20px;
+            margin: 20px 0;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .privacy-content {
+            max-height: 200px;
+            overflow-y: auto;
+            background: rgba(15, 15, 15, 0.8);
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-size: 13px;
+            line-height: 1.4;
+        }
+        
+        .checkbox-group {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            margin: 20px 0;
+        }
+        
+        .checkbox-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 8px;
+        }
+        
+        .checkbox-item input[type="checkbox"] {
+            margin-top: 2px;
+            transform: scale(1.2);
+        }
+        
+        .checkbox-label {
+            font-size: 14px;
+            line-height: 1.4;
+        }
+        
+        .privacy-link {
+            color: #7289da;
+            text-decoration: none;
+            font-weight: 600;
+        }
+        
+        .privacy-link:hover {
+            text-decoration: underline;
+        }
+        
         /* Enhanced Panel Styles */
         .panel-section {
             background: rgba(30, 30, 30, 0.8);
@@ -612,7 +708,7 @@ const keySiteHtml = `<!DOCTYPE html>
         
         .action-buttons {
             display: grid;
-            grid-template-columns: 1fr 1fr;
+            grid-template-columns: 1fr;
             gap: 10px;
             margin: 20px 0;
         }
@@ -623,15 +719,6 @@ const keySiteHtml = `<!DOCTYPE html>
         
         .btn-secondary:hover {
             background: linear-gradient(135deg, #369a6d 0%, #2d8a5c 100%) !important;
-        }
-        
-        .history-item {
-            background: rgba(255, 255, 255, 0.03);
-            padding: 10px;
-            border-radius: 6px;
-            margin: 5px 0;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
         }
         
         .tab-container {
@@ -689,9 +776,56 @@ const keySiteHtml = `<!DOCTYPE html>
                 <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
             </div>
             
-            <div id="workinkSection">
+            <!-- Privacy Policy Section -->
+            <div id="privacySection" class="privacy-section">
                 <div class="step">
                     <div class="step-number">1</div>
+                    <div>
+                        <strong>Privacy Policy & Age Verification</strong>
+                        <div class="info-text">You must agree to continue</div>
+                    </div>
+                </div>
+                
+                <div class="privacy-content">
+                    <h4>Data Collection Notice</h4>
+                    <p>By using this service, you agree that we may collect and store the following information:</p>
+                    <ul>
+                        <li>Your IP Address</li>
+                        <li>Hardware ID (HWID)</li>
+                        <li>Virtual MAC Address (VMAC)</li>
+                        <li>Discord User ID</li>
+                        <li>Browser User Agent</li>
+                        <li>Session information</li>
+                    </ul>
+                    <p><strong>Purpose:</strong> This data is collected for security, anti-fraud, and service improvement purposes.</p>
+                    <p><strong>Storage:</strong> Data is stored securely and may be retained for up to 30 days after account termination.</p>
+                    <p><strong>Age Requirement:</strong> You must be 16 years or older to use this service.</p>
+                    <p>By checking the boxes below, you confirm your understanding and agreement to these terms.</p>
+                </div>
+                
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="privacyAgree">
+                        <label for="privacyAgree" class="checkbox-label">
+                            I have read and agree to the Privacy Policy and consent to the collection of my IP address, HWID, VMAC, Discord User ID, and other technical information as described above.
+                        </label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="ageVerify">
+                        <label for="ageVerify" class="checkbox-label">
+                            I confirm that I am 16 years of age or older.
+                        </label>
+                    </div>
+                </div>
+                
+                <button onclick="verifyPrivacy()" id="privacyBtn" disabled>
+                    Continue to Verification
+                </button>
+            </div>
+            
+            <div id="workinkSection" class="hidden">
+                <div class="step">
+                    <div class="step-number">2</div>
                     <div>
                         <strong>Start Verification</strong>
                         <div class="info-text">This creates a key tied to your connection for security.</div>
@@ -710,7 +844,7 @@ const keySiteHtml = `<!DOCTYPE html>
                 </div>
                 
                 <div class="step">
-                    <div class="step-number">2</div>
+                    <div class="step-number">3</div>
                     <div>
                         <strong>Your Activation Key</strong>
                         <div class="info-text">Copy this key and activate it within 24 hours.</div>
@@ -724,7 +858,7 @@ const keySiteHtml = `<!DOCTYPE html>
                 </button>
                 
                 <div class="step">
-                    <div class="step-number">3</div>
+                    <div class="step-number">4</div>
                     <div>
                         <strong>Activate in Discord</strong>
                         <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
@@ -751,8 +885,8 @@ const keySiteHtml = `<!DOCTYPE html>
                             <div class="status-value" id="panelIp">Loading...</div>
                         </div>
                         <div class="status-item">
-                            <div class="status-label">Keys Generated</div>
-                            <div class="status-value" id="panelKeys">0</div>
+                            <div class="status-label">Current Key</div>
+                            <div class="status-value" id="panelKeyStatus">Loading...</div>
                         </div>
                     </div>
                     
@@ -761,7 +895,7 @@ const keySiteHtml = `<!DOCTYPE html>
                             <div class="step-number">★</div>
                             <div>
                                 <strong>Current Active Key</strong>
-                                <div class="info-text">Your most recently generated key</div>
+                                <div class="info-text">Your current activation key</div>
                             </div>
                         </div>
                         
@@ -771,13 +905,14 @@ const keySiteHtml = `<!DOCTYPE html>
                             <button onclick="copyPanelKey()" class="btn-secondary">
                                 Copy Key
                             </button>
-                            <button onclick="refillKey()" id="refillBtn">
-                                Refill Key
+                            <button onclick="renewKey()" id="renewBtn">
+                                Renew Key
                             </button>
                         </div>
                         
                         <div class="warning">
-                            <strong>Status:</strong> <span id="keyStatus">Loading...</span>
+                            <strong>Status:</strong> <span id="keyStatus">Loading...</span><br>
+                            <strong>Expires:</strong> <span id="keyExpiry">Loading...</span>
                         </div>
                     </div>
                     
@@ -789,15 +924,6 @@ const keySiteHtml = `<!DOCTYPE html>
                             Generate New Key
                         </button>
                     </div>
-                </div>
-            </div>
-            
-            <div class="panel-section">
-                <div class="panel-header">
-                    <div class="panel-title">Key History</div>
-                </div>
-                <div id="keyHistory">
-                    <div class="info-text">Loading key history...</div>
                 </div>
             </div>
         </div>
@@ -824,6 +950,33 @@ const keySiteHtml = `<!DOCTYPE html>
             }
         }
         
+        // Privacy policy checkbox validation
+        function setupPrivacyCheckboxes() {
+            const privacyCheckbox = document.getElementById('privacyAgree');
+            const ageCheckbox = document.getElementById('ageVerify');
+            const privacyBtn = document.getElementById('privacyBtn');
+            
+            function validateCheckboxes() {
+                privacyBtn.disabled = !(privacyCheckbox.checked && ageCheckbox.checked);
+            }
+            
+            privacyCheckbox.addEventListener('change', validateCheckboxes);
+            ageCheckbox.addEventListener('change', validateCheckboxes);
+        }
+        
+        // Verify privacy policy and age
+        function verifyPrivacy() {
+            const privacySection = document.getElementById('privacySection');
+            const workinkSection = document.getElementById('workinkSection');
+            
+            privacySection.classList.add('hidden');
+            workinkSection.classList.remove('hidden');
+            
+            // Store privacy agreement in session
+            localStorage.setItem('privacyAgreed', 'true');
+            localStorage.setItem('ageVerified', 'true');
+        }
+        
         // Load user panel data
         async function loadUserPanel() {
             try {
@@ -833,30 +986,31 @@ const keySiteHtml = `<!DOCTYPE html>
                 if (result.success) {
                     // Update session info
                     document.getElementById('panelIp').textContent = result.session.ip;
-                    document.getElementById('panelKeys').textContent = result.session.keys_generated;
                     
                     // Update current key info
                     if (result.current_key) {
+                        const keyExpiry = new Date(result.current_key.expires_at);
+                        const now = new Date();
+                        const isExpired = keyExpiry < now;
+                        
                         document.getElementById('panelCurrentKey').textContent = result.current_key.key;
                         document.getElementById('keyStatus').textContent = 
                             result.current_key.activated ? 'Activated' : 'Not Activated';
+                        document.getElementById('keyExpiry').textContent = isExpired ? 
+                            'EXPIRED' : keyExpiry.toLocaleString();
+                        document.getElementById('panelKeyStatus').textContent = isExpired ? 'Expired' : 'Active';
                         document.getElementById('currentKeyInfo').classList.remove('hidden');
                         document.getElementById('noKeyInfo').classList.add('hidden');
                         
-                        // Load key history
-                        if (result.session.keys_generated > 0) {
-                            const historyContainer = document.getElementById('keyHistory');
-                            historyContainer.innerHTML = '';
-                            result.session.keys_generated.forEach(key => {
-                                const historyItem = document.createElement('div');
-                                historyItem.className = 'history-item';
-                                historyItem.textContent = key;
-                                historyContainer.appendChild(historyItem);
-                            });
+                        // Enable/disable renew button based on expiry
+                        document.getElementById('renewBtn').disabled = !isExpired;
+                        if (!isExpired) {
+                            document.getElementById('renewBtn').textContent = 'Key Still Valid';
                         }
                     } else {
                         document.getElementById('currentKeyInfo').classList.add('hidden');
                         document.getElementById('noKeyInfo').classList.remove('hidden');
+                        document.getElementById('panelKeyStatus').textContent = 'None';
                     }
                 }
             } catch (error) {
@@ -864,34 +1018,35 @@ const keySiteHtml = `<!DOCTYPE html>
             }
         }
         
-        // Refill key function
-        async function refillKey() {
-            const btn = document.getElementById('refillBtn');
+        // Renew key function
+        async function renewKey() {
+            const btn = document.getElementById('renewBtn');
             const originalText = btn.textContent;
             
             btn.disabled = true;
-            btn.textContent = 'Refilling...';
+            btn.textContent = 'Renewing...';
             
             try {
-                const response = await fetch('/refill', { method: 'POST' });
+                const response = await fetch('/renew', { method: 'POST' });
                 const result = await response.json();
                 
                 if (result.success) {
                     // Update UI with new key
                     document.getElementById('panelCurrentKey').textContent = result.key;
-                    document.getElementById('panelKeys').textContent = result.total_keys_generated;
                     document.getElementById('keyStatus').textContent = 'Not Activated';
+                    document.getElementById('keyExpiry').textContent = new Date(result.expires_at).toLocaleString();
+                    document.getElementById('panelKeyStatus').textContent = 'Active';
                     
                     // Auto-copy new key
                     navigator.clipboard.writeText(result.key).then(() => {
-                        btn.textContent = '✓ Refilled & Copied';
+                        btn.textContent = '✓ Renewed & Copied';
                         setTimeout(() => {
-                            btn.textContent = 'Refill Key';
-                            btn.disabled = false;
+                            btn.textContent = 'Renew Key';
+                            btn.disabled = true; // Disable until expired again
                         }, 2000);
                     });
                 } else {
-                    alert('Refill failed: ' + result.error);
+                    alert('Renew failed: ' + result.error);
                     btn.disabled = false;
                     btn.textContent = originalText;
                 }
@@ -925,7 +1080,16 @@ const keySiteHtml = `<!DOCTYPE html>
             btn.classList.add('loading');
             
             try {
-                const response = await fetch('/workink', { method: 'POST' });
+                const response = await fetch('/workink', { 
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        privacy_agreed: true,
+                        age_verified: true
+                    })
+                });
                 const result = await response.json();
                 
                 if (result.success) {
@@ -974,6 +1138,20 @@ const keySiteHtml = `<!DOCTYPE html>
                 }, 2000);
             });
         }
+        
+        // Initialize privacy checkboxes
+        document.addEventListener('DOMContentLoaded', function() {
+            setupPrivacyCheckboxes();
+            
+            // Check if user already agreed to privacy policy
+            const privacyAgreed = localStorage.getItem('privacyAgreed');
+            const ageVerified = localStorage.getItem('ageVerified');
+            
+            if (privacyAgreed === 'true' && ageVerified === 'true') {
+                document.getElementById('privacySection').classList.add('hidden');
+                document.getElementById('workinkSection').classList.remove('hidden');
+            }
+        });
     </script>
 </body>
 </html>`;
@@ -1295,7 +1473,7 @@ function monitorPerformance() {
   }
 }
 
-// Enhanced WorkInk endpoint with session tracking and blacklist checks
+// Enhanced WorkInk endpoint with session tracking, blacklist checks, and privacy verification
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
   // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
@@ -1309,6 +1487,25 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
   }
   
   const session = await getUserSession(kv, clientIP, userAgent);
+  
+  // Check if user has agreed to privacy policy and age verification
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    return jsonResponse({ error: "Invalid JSON in request body" }, 400);
+  }
+
+  const { privacy_agreed, age_verified } = body;
+  
+  if (!privacy_agreed || !age_verified) {
+    return jsonResponse({ 
+      error: "You must agree to the privacy policy and age verification to generate a key." 
+    }, 403);
+  }
+  
+  // Update session with privacy agreement
+  await updateUserSession(kv, clientIP, userAgent, undefined, undefined, true, true);
   
   // If session has previous keys, check if any were activated by blacklisted users
   if (session.keys_generated.length > 0) {
@@ -1332,6 +1529,18 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
     }
   }
   
+  // Check if user already has a valid key
+  if (session.current_key) {
+    const keyEntry = await kv.get(["keys", session.current_key]);
+    if (keyEntry.value && keyEntry.value.expires_at > Date.now()) {
+      return jsonResponse({ 
+        error: "You already have an active key. Please wait until it expires to generate a new one.",
+        current_key: session.current_key,
+        expires_at: keyEntry.value.expires_at
+      }, 409);
+    }
+  }
+  
   const key = generateFormattedKey();
   const expiresAt = Date.now() + KEY_EXPIRY_MS;
   
@@ -1345,7 +1554,9 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
       ip: clientIP,
       user_agent: userAgent,
       completed_at: Date.now(),
-      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`
+      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
+      privacy_agreed: true,
+      age_verified: true
     }
   };
   
@@ -1357,14 +1568,13 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
     key: key,
     expires_at: new Date(expiresAt).toISOString(),
     existing_session: session.keys_generated.length > 0,
-    previous_keys: session.keys_generated.length,
     message: "Verification completed successfully"
   });
 }
 
-// Refill system - generate new key for existing session
-async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
-  // Check blacklist first
+// Renew key system - only allow renewal when current key is expired
+async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
+  // Check blacklist first - FIXED: Now checks blacklist for renew too
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
     return jsonResponse({ 
@@ -1375,9 +1585,18 @@ async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
   
   const session = await getUserSession(kv, clientIP, userAgent);
   
-  if (!session.current_key && session.keys_generated.length === 0) {
+  if (!session.current_key) {
     return jsonResponse({ 
       error: "No existing key found. Please generate a new key first." 
+    }, 400);
+  }
+  
+  // Check if current key can be renewed (must be expired)
+  const renewCheck = await canRenewKey(kv, session);
+  if (!renewCheck.canRenew) {
+    return jsonResponse({ 
+      error: renewCheck.reason || "Cannot renew key at this time.",
+      current_key: session.current_key
     }, 400);
   }
   
@@ -1396,7 +1615,10 @@ async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
       user_agent: userAgent,
       completed_at: Date.now(),
       session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
-      is_refill: true
+      is_renewal: true,
+      previous_key: session.current_key,
+      privacy_agreed: session.privacy_agreed,
+      age_verified: session.age_verified
     }
   };
   
@@ -1408,9 +1630,9 @@ async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
     success: true,
     key: key,
     expires_at: new Date(expiresAt).toISOString(),
-    is_refill: true,
-    total_keys_generated: session.keys_generated.length + 1,
-    message: "Key refilled successfully"
+    is_renewal: true,
+    previous_key: session.current_key,
+    message: "Key renewed successfully"
   });
 }
 
@@ -1433,7 +1655,9 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
       ip: session.ip,
       keys_generated: session.keys_generated.length,
       last_active: session.last_active,
-      current_key: session.current_key
+      current_key: session.current_key,
+      privacy_agreed: session.privacy_agreed,
+      age_verified: session.age_verified
     },
     current_key: keyInfo ? {
       key: keyInfo.key,
@@ -1441,7 +1665,7 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
       created_at: keyInfo.created_at,
       expires_at: keyInfo.expires_at
     } : null,
-    can_refill: true // Always allow refill for now
+    can_renew: keyInfo ? keyInfo.expires_at < Date.now() : false
   });
 }
 
@@ -1607,8 +1831,8 @@ export async function handler(req: Request): Promise<Response> {
         return await handleWorkInk(kv, clientIP, userAgent, req);
       }
 
-      if (url.pathname === '/refill' && req.method === 'POST') {
-        return await handleRefill(kv, clientIP, userAgent);
+      if (url.pathname === '/renew' && req.method === 'POST') {
+        return await handleRenew(kv, clientIP, userAgent, req);
       }
 
       if (url.pathname === '/user-panel' && req.method === 'GET') {
