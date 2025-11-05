@@ -160,7 +160,6 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
 }
 
 // Add to blacklist with all identifiers
-// Enhanced addToBlacklist function
 async function addToBlacklist(
   kv: Deno.Kv, 
   discordId: string, 
@@ -176,19 +175,24 @@ async function addToBlacklist(
   
   let identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
   
-  // Find and add all sessions linked to this Discord ID
-  const linkedSessions = await findUserSessions(kv, discordId);
+  // Find and add all sessions linked to this Discord ID with error handling
   let sessionCount = 0;
-  
-  for (const session of linkedSessions) {
-    // Add session IP to blacklist
-    if (session.ip && session.ip !== 'unknown') {
-      identifiers.push(`ip:${session.ip}`);
+  try {
+    const linkedSessions = await findUserSessions(kv, discordId);
+    
+    for (const session of linkedSessions) {
+      // Add session IP to blacklist
+      if (session.ip && session.ip !== 'unknown') {
+        identifiers.push(`ip:${session.ip}`);
+      }
+      // Add session identifier
+      const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
+      identifiers.push(`session:${sessionId}`);
+      sessionCount++;
     }
-    // Add session identifier
-    const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
-    identifiers.push(`session:${sessionId}`);
-    sessionCount++;
+  } catch (error) {
+    console.error('Error processing linked sessions for blacklist:', error);
+    // Continue with blacklisting even if session lookup fails
   }
   
   // Remove duplicates
@@ -267,13 +271,22 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
   
   if (entry.value) {
     const session = entry.value as UserSession;
+    
+    // Ensure session has all required properties
+    if (!session.linked_discord_ids) {
+      session.linked_discord_ids = [];
+    }
+    if (!session.keys_generated) {
+      session.keys_generated = [];
+    }
+    
     // Update last active
     session.last_active = Date.now();
     await kv.set(["sessions", sessionId], session);
     return session;
   }
   
-  // Create new session
+  // Create new session with all required properties
   const newSession: UserSession = {
     ip,
     user_agent: userAgent,
@@ -285,7 +298,6 @@ async function getUserSession(kv: Deno.Kv, ip: string, userAgent: string): Promi
   await kv.set(["sessions", sessionId], newSession);
   return newSession;
 }
-
 // Enhanced session update with Discord ID tracking
 async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, newKey?: string, discordId?: string): Promise<UserSession> {
   const session = await getUserSession(kv, ip, userAgent);
