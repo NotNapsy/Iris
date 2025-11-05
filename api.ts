@@ -266,7 +266,7 @@ async function updateUserSession(kv: Deno.Kv, ip: string, userAgent: string, new
   return session;
 }
 
-// Enhanced HTML with User Panel
+// Enhanced HTML with User Panel - Fixed template literals
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
@@ -754,10 +754,14 @@ const keySiteHtml = `<!DOCTYPE html>
                         
                         // Load key history
                         if (result.session.keys_generated > 0) {
-                            const historyHtml = result.session.keys_generated.map(key => 
-                                `<div class="history-item">${key}</div>`
-                            ).join('');
-                            document.getElementById('keyHistory').innerHTML = historyHtml;
+                            const historyContainer = document.getElementById('keyHistory');
+                            historyContainer.innerHTML = '';
+                            result.session.keys_generated.forEach(key => {
+                                const historyItem = document.createElement('div');
+                                historyItem.className = 'history-item';
+                                historyItem.textContent = key;
+                                historyContainer.appendChild(historyItem);
+                            });
                         }
                     } else {
                         document.getElementById('currentKeyInfo').classList.add('hidden');
