@@ -1384,7 +1384,7 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
-// Get user info for blacklisting
+// Get user info for blacklisting - FIXED VERSION
 async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
   if (apiKey !== ADMIN_API_KEY) {
@@ -1407,10 +1407,13 @@ async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
     }
   }
 
+  // Return success even if no keys found, just with empty data
   return jsonResponse({ 
+    success: true,
     user_id: discordId,
     activated_keys: userKeys,
-    total_activations: userKeys.length
+    total_activations: userKeys.length,
+    found: userKeys.length > 0
   });
 }
 
