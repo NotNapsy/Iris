@@ -13,7 +13,7 @@ const RATE_LIMIT = {
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
@@ -1384,7 +1384,7 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   return jsonResponse({ error: 'Method not allowed' }, 405);
 }
 
-// Get user info for blacklisting - FIXED VERSION
+// Get user info for blacklisting
 async function handleAdminUserInfo(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
   if (apiKey !== ADMIN_API_KEY) {
@@ -1666,12 +1666,12 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({ key: keyData });
       }
 
-      // Admin blacklist management
+      // Admin blacklist management - FIXED ROUTING
       if (url.pathname === '/admin/blacklist') {
         return await handleAdminBlacklist(kv, req);
       }
 
-      // Get user info for blacklisting
+      // Get user info for blacklisting - FIXED ROUTING
       if (url.pathname === '/admin/user-info' && req.method === 'GET') {
         return await handleAdminUserInfo(kv, req);
       }
