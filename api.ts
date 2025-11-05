@@ -1248,7 +1248,7 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string) {
 
 // Refill system - generate new key for existing session
 async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
-  // Check blacklist
+  // Check blacklist first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
     return jsonResponse({ 
@@ -1297,7 +1297,6 @@ async function handleRefill(kv: Deno.Kv, clientIP: string, userAgent: string) {
     message: "Key refilled successfully"
   });
 }
-
 // User panel endpoint
 async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string) {
   const session = await getUserSession(kv, clientIP, userAgent);
