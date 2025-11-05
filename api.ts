@@ -1,4 +1,4 @@
-// api.ts - Fixed encoding and functional key system
+// api.ts - Updated with Lunith branding
 const TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
@@ -8,25 +8,25 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
-// Your script content
-const SCRIPT_CONTENT = `print("Hello from Iris Hub!")
+// Your script content - Updated to Lunith
+const SCRIPT_CONTENT = `print("Hello from Lunith Hub!")
 
 -- Your main script logic here
 local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
 
 if LocalPlayer then
-    print("Iris Hub loaded for player:", LocalPlayer.Name)
+    print("Lunith Hub loaded for player:", LocalPlayer.Name)
 end
 
-return "Iris Hub loaded successfully"`;
+return "Lunith Hub loaded successfully"`;
 
-// HTML for key.napsy.dev (Key System) - Fixed encoding
+// HTML for key.napsy.dev (Key System) - Lunith branding
 const keySiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Iris Hub - Key Activation</title>
+    <title>Lunith - Key Activation</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 600px; margin: 50px auto; padding: 20px; background: #1a1a1a; color: white; }
         .container { background: #2d2d2d; padding: 30px; border-radius: 10px; border: 1px solid #444; }
@@ -41,7 +41,7 @@ const keySiteHtml = `<!DOCTYPE html>
 </head>
 <body>
     <div class="container">
-        <h1>🔑 Iris Hub Key System</h1>
+        <h1>🔑 Lunith Key System</h1>
         <p>Complete the WorkInk verification to get your activation key.</p>
         
         <div id="workinkSection">
@@ -92,12 +92,12 @@ const keySiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// HTML for api.napsy.dev (API Health/Info) - Fixed encoding
+// HTML for api.napsy.dev (API Health/Info) - Lunith branding
 const apiSiteHtml = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Iris Hub API</title>
+    <title>Lunith API</title>
     <style>
         body { font-family: Arial, sans-serif; max-width: 800px; margin: 50px auto; padding: 20px; text-align: center; background: #1a1a1a; color: white; }
         .container { background: #2d2d2d; padding: 40px; border-radius: 10px; border: 1px solid #444; }
@@ -107,7 +107,7 @@ const apiSiteHtml = `<!DOCTYPE html>
 </head>
 <body>
     <div class="container">
-        <h1>🚀 Iris Hub API</h1>
+        <h1>🚀 Lunith API</h1>
         <p class="status">✅ Status: Online</p>
         <p>Secure script delivery service</p>
         <p><a href="https://key.napsy.dev" style="color: #7289da;">Get your activation key →</a></p>
@@ -115,7 +115,7 @@ const apiSiteHtml = `<!DOCTYPE html>
 </body>
 </html>`;
 
-// Utility functions
+// Utility functions (same as before)
 function jsonResponse(data: any, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
@@ -151,7 +151,7 @@ function getClientIP(req: Request): string {
   return cfConnectingIP || xForwardedFor?.split(',')[0] || 'unknown';
 }
 
-// Main handler
+// Main handler - Updated activation tracking
 export async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const hostname = url.hostname;
@@ -207,7 +207,7 @@ export async function handler(req: Request): Promise<Response> {
       return new Response("Not found", { status: 404 });
     }
 
-    // 🚀 API.NAPSY.DEV - Script API (Limited endpoints)
+    // 🚀 API.NAPSY.DEV - Script API
     if (hostname === 'api.napsy.dev') {
       if (url.pathname === '/' && req.method === 'GET') {
         return new Response(apiSiteHtml, {
@@ -246,50 +246,10 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // 🔒 ADMIN ENDPOINTS (Hidden from public)
-      if (url.pathname === '/publishScript' && req.method === 'POST') {
-        const apiKey = req.headers.get('X-Admin-Api-Key');
-        if (apiKey !== ADMIN_API_KEY) {
-          return jsonResponse({ error: 'Unauthorized' }, 401);
-        }
-
-        let body;
-        try {
-          body = await req.json();
-        } catch (error) {
-          return jsonResponse({ error: 'Invalid JSON' }, 400);
-        }
-
-        if (!body?.discord_userid) {
-          return jsonResponse({ error: 'discord_userid required' }, 400);
-        }
-
-        const token = generateToken();
-        const expiresAt = Date.now() + TOKEN_TTL_MS;
-
-        const kv = await Deno.openKv();
-        await kv.set(['token', token], {
-          user_id: body.discord_userid,
-          expires_at: expiresAt,
-          created_at: Date.now(),
-        });
-        await kv.close();
-
-        const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
-        const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
-
-        return jsonResponse({
-          success: true,
-          script_url: scriptUrl,
-          loadstring: loadstringStr,
-          expires_at: new Date(expiresAt).toISOString(),
-        });
-      }
-
-      // 🔑 Key activation (Discord bot only)
+      // Key activation (Discord bot only) - Updated with user tracking
       if (url.pathname === '/activate' && req.method === 'POST') {
         const body = await req.json();
-        const { key, discord_id } = body;
+        const { key, discord_id, discord_username } = body; // Added discord_username
         
         if (!key || !discord_id) {
           return jsonResponse({ error: 'Key and discord_id required' }, 400);
@@ -322,21 +282,23 @@ export async function handler(req: Request): Promise<Response> {
         const scriptToken = generateToken();
         const expiresAt = Date.now() + TOKEN_TTL_MS;
         
-        // Store script token
+        // Store script token with user info
         await kv.set(['token', scriptToken], {
           user_id: discord_id,
+          username: discord_username || 'Unknown', // Store username
           expires_at: expiresAt,
           created_at: Date.now(),
           key: key,
           activation_ip: keyData.workink_data.ip
         });
 
-        // Activate the key
+        // Activate the key with user info
         keyData.activated = true;
         keyData.script_token = scriptToken;
         keyData.activation_data = {
           ip: keyData.workink_data.ip,
           discord_id: discord_id,
+          discord_username: discord_username || 'Unknown', // Store who activated it
           activated_at: Date.now()
         };
         
@@ -353,7 +315,7 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
-      // 🔍 Check key status (Admin/Discord bot only)
+      // Check key status - Now shows who activated it
       if (url.pathname === '/check-key' && req.method === 'GET') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
         if (apiKey !== ADMIN_API_KEY) {
@@ -379,8 +341,7 @@ export async function handler(req: Request): Promise<Response> {
       return new Response("Not found", { status: 404 });
     }
 
-    // Default response for other domains
-    return new Response("Iris Hub Service", { headers: corsHeaders });
+    return new Response("Lunith Service", { headers: corsHeaders });
 
   } catch (err) {
     console.error("Server error:", err);
