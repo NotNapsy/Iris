@@ -1317,7 +1317,6 @@ function monitorPerformance() {
   }
 }
 
-// Enhanced WorkInk endpoint
 // Enhanced WorkInk endpoint with comprehensive blacklist checking and fingerprinting
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
   // Check blacklist for IP and User Agent first
@@ -1815,567 +1814,590 @@ export async function handler(req: Request): Promise<Response> {
       }
       if (url.pathname === '/health' && req.method === 'GET') return jsonResponse({ status: 'online', service: 'script-api', domain: 'api.napsy.dev', timestamp: new Date().toISOString(), metrics });
       if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
-  const token = url.pathname.split('/')[2];
-  if (!token) return new Response("Token required", { status: 400 });
-  
-  const data = await kv.get(["token", token]);
-  if (!data.value) return new Response("Token not found", { status: 404 });
-  
-  if (data.value.expires_at < Date.now()) {
-    await kv.delete(["token", token]);
-    return new Response("Token expired", { status: 410 });
-  }
-  
-  // Inject the actual token into the script content
-  const scriptContent = SCRIPT_CONTENT_BASE.replace('"{{TOKEN}}"', `"${token}"`);
-  
-  return new Response(scriptContent, { 
-    headers: { 
-      "Content-Type": "text/plain; charset=utf-8", 
-      ...corsHeaders 
-    } 
-  });
-}
+        const token = url.pathname.split('/')[2];
+        if (!token) return new Response("Token required", { status: 400 });
+        
+        const data = await kv.get(["token", token]);
+        if (!data.value) return new Response("Token not found", { status: 404 });
+        
+        if (data.value.expires_at < Date.now()) {
+          await kv.delete(["token", token]);
+          return new Response("Token expired", { status: 410 });
+        }
+        
+        // Inject the actual token into the script content
+        const scriptContent = SCRIPT_CONTENT_BASE.replace('"{{TOKEN}}"', `"${token}"`);
+        
+        return new Response(scriptContent, { 
+          headers: { 
+            "Content-Type": "text/plain; charset=utf-8", 
+            ...corsHeaders 
+          } 
+        });
+      }
 
       // Generate multiple keys endpoint
-// In the generate-keys endpoint, modify it to accept expire_time
-if (url.pathname === '/generate-keys' && req.method === 'POST') {
-  const apiKey = req.headers.get('X-Admin-Api-Key');
-  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+      if (url.pathname === '/generate-keys' && req.method === 'POST') {
+        const apiKey = req.headers.get('X-Admin-Api-Key');
+        if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
 
-  let body;
-  try {
-    body = await req.json();
-  } catch (error) {
-    return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
-  }
-
-  const { amount, expire_time } = body;
-  if (!amount || amount < 1 || amount > 50) {
-    return jsonResponse({ error: 'Amount must be between 1 and 50' }, 400);
-  }
-
-  try {
-    // Parse custom expiration time or use default
-    let customExpiryMs = KEY_EXPIRY_MS; // Default 24 hours
-    if (expire_time) {
-      const parsedDuration = parseDuration(expire_time);
-      if (parsedDuration) {
-        customExpiryMs = parsedDuration;
-      }
-      // If parsing fails, fall back to default without error
-    }
-
-    const keys = [];
-    
-    for (let i = 0; i < amount; i++) {
-      const key = generateFormattedKey();
-      const expiresAt = Date.now() + customExpiryMs;
-      
-      const keyData = {
-        key,
-        created_at: Date.now(),
-        expires_at: expiresAt,
-        activated: false,
-        workink_completed: true,
-        admin_generated: true,
-        custom_expiration: expire_time || null
-      };
-      
-      await kv.set(["keys", key], keyData);
-      keys.push(key);
-    }
-
-    return jsonResponse({
-      success: true,
-      keys: keys,
-      message: `Generated ${amount} keys successfully`,
-      expires_at: new Date(Date.now() + customExpiryMs).toISOString(),
-      custom_expiration: expire_time || null,
-      duration_ms: customExpiryMs
-    });
-  } catch (error) {
-    console.error('Generate keys error:', error);
-    return jsonResponse({ error: 'Failed to generate keys' }, 500);
-  }
-}
-
-      // Enhanced validation endpoint in api.ts
-// Enhanced validation endpoint in api.ts
-// In the /validate-token endpoint, add IP capture:
-if (url.pathname === '/validate-token' && req.method === 'POST') {
-  try {
-    let body;
-    try {
-      body = await req.json();
-    } catch (error) {
-      return jsonResponse({ error: "Invalid JSON in request body" }, 400);
-    }
-
-    const { 
-      token, 
-      executor, 
-      hwid, 
-      player_name, 
-      player_userid, 
-      other_scripts_running,
-      timestamp 
-    } = body;
-    
-    if (!token || token === 'unknown') {
-      return jsonResponse({ error: "Invalid token" }, 400);
-    }
-
-    // Get the executor's IP address
-    const executorIP = getClientIP(req); // Use your existing getClientIP function
-    
-    // Verify the token exists and is valid
-    const tokenEntry = await kv.get(["token", token]);
-    if (!tokenEntry.value) {
-      return jsonResponse({ error: "Token not found" }, 404);
-    }
-
-    const tokenData = tokenEntry.value;
-    
-    // Check if token is expired
-    if (tokenData.expires_at < Date.now()) {
-      await kv.delete(["token", token]);
-      return jsonResponse({ error: "Token expired" }, 410);
-    }
-
-    // Find the key associated with this token
-    const keyEntry = await kv.get(["keys", tokenData.key]);
-    if (!keyEntry.value) {
-      return jsonResponse({ error: "Associated key not found" }, 404);
-    }
-
-    const keyData = keyEntry.value;
-    
-    // IP VERIFICATION: Compare executor IP with original verification IP
-    const originalIP = keyData.workink_data?.ip;
-    const ipMatches = originalIP && executorIP === originalIP;
-    
-    if (!ipMatches) {
-      // Log the IP mismatch for security monitoring
-      await kv.set(["security", "ip_mismatch", Date.now()], {
-        key: tokenData.key,
-        token: token,
-        discord_id: tokenData.user_id,
-        original_ip: originalIP,
-        executor_ip: executorIP,
-        executor: executor,
-        timestamp: Date.now()
-      });
-      
-      return jsonResponse({ 
-        success: false, 
-        error: "IP address verification failed. Script execution blocked for security reasons.",
-        details: {
-          expected_ip: originalIP,
-          received_ip: executorIP,
-          ip_match: false
+        let body;
+        try {
+          body = await req.json();
+        } catch (error) {
+          return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
         }
-      }, 403);
-    }
 
-    // Continue with normal validation if IP matches...
-    const now = Date.now();
-    if (!keyData.activation_data) {
-      keyData.activation_data = {
-        discord_id: tokenData.user_id,
-        discord_username: tokenData.username,
-        activated_at: now,
-        executor: executor,
-        hwid: hwid,
-        player_name: player_name,
-        player_userid: player_userid,
-        first_validation: now,
-        validations: [{
-          timestamp: now,
-          executor: executor,
-          hwid: hwid,
-          player_name: player_name,
-          player_userid: player_userid,
-          other_scripts: other_scripts_running,
-          ip: executorIP, // Store the executor IP
-          ip_match: true
-        }]
-      };
-    } else {
-      // Update existing activation with executor IP
-      keyData.activation_data.executor = executor || keyData.activation_data.executor;
-      keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
-      keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
-      keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
-      keyData.activation_data.last_validation = now;
-      keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
-      keyData.activation_data.last_ip = executorIP;
-      
-      // Track validation history with IP
-      if (!keyData.activation_data.validations) {
-        keyData.activation_data.validations = [];
+        const { amount, expire_time } = body;
+        if (!amount || amount < 1 || amount > 50) {
+          return jsonResponse({ error: 'Amount must be between 1 and 50' }, 400);
+        }
+
+        try {
+          // Parse custom expiration time or use default
+          let customExpiryMs = KEY_EXPIRY_MS; // Default 24 hours
+          if (expire_time) {
+            const parsedDuration = parseDuration(expire_time);
+            if (parsedDuration) {
+              customExpiryMs = parsedDuration;
+            }
+            // If parsing fails, fall back to default without error
+          }
+
+          const keys = [];
+          
+          for (let i = 0; i < amount; i++) {
+            const key = generateFormattedKey();
+            const expiresAt = Date.now() + customExpiryMs;
+            
+            const keyData = {
+              key,
+              created_at: Date.now(),
+              expires_at: expiresAt,
+              activated: false,
+              workink_completed: true,
+              admin_generated: true,
+              custom_expiration: expire_time || null
+            };
+            
+            await kv.set(["keys", key], keyData);
+            keys.push(key);
+          }
+
+          return jsonResponse({
+            success: true,
+            keys: keys,
+            message: `Generated ${amount} keys successfully`,
+            expires_at: new Date(Date.now() + customExpiryMs).toISOString(),
+            custom_expiration: expire_time || null,
+            duration_ms: customExpiryMs
+          });
+        } catch (error) {
+          console.error('Generate keys error:', error);
+          return jsonResponse({ error: 'Failed to generate keys' }, 500);
+        }
       }
-      keyData.activation_data.validations.push({
-        timestamp: now,
-        executor: executor,
-        hwid: hwid,
-        player_name: player_name,
-        player_userid: player_userid,
-        other_scripts: other_scripts_running,
-        ip: executorIP,
-        ip_match: true
-      });
-      
-      // Keep only last 10 validations
-      if (keyData.activation_data.validations.length > 10) {
-        keyData.activation_data.validations = keyData.activation_data.validations.slice(-10);
-      }
-    }
-    
-    await kv.set(["keys", tokenData.key], keyData);
 
-    // Enhanced blacklist checking with executor IP
-    const blacklistCheck = await isBlacklisted(
-      kv, 
-      tokenData.user_id, 
-      executorIP, // Use executor IP for blacklist check
-      `Executor/${executor}`,
-      keyData,
-      { 
-        hwid: hwid,
-        executor: executor,
-        player_userid: player_userid
-      }
-    );
+      // Enhanced validation endpoint
+      if (url.pathname === '/validate-token' && req.method === 'POST') {
+        try {
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            return jsonResponse({ error: "Invalid JSON in request body" }, 400);
+          }
 
-    if (blacklistCheck.blacklisted) {
-      // Log the blocked attempt
-      await kv.set(["security", "blocked_attempts", now], {
-        key: tokenData.key,
-        token: token,
-        discord_id: tokenData.user_id,
-        executor: executor,
-        hwid: hwid,
-        executor_ip: executorIP,
-        reason: blacklistCheck.entry?.reason,
-        severity: blacklistCheck.severity,
-        timestamp: now
-      });
-      
-      return jsonResponse({ 
-        success: false, 
-        error: "Access denied. Your account or device is blacklisted.",
-        reason: blacklistCheck.entry?.reason,
-        severity: blacklistCheck.severity,
-        matched_identifier: blacklistCheck.matchedIdentifier
-      }, 403);
-    }
+          const { 
+            token, 
+            executor, 
+            hwid, 
+            player_name, 
+            player_userid, 
+            other_scripts_running,
+            timestamp 
+          } = body;
+          
+          if (!token || token === 'unknown') {
+            return jsonResponse({ error: "Invalid token" }, 400);
+          }
 
-    // Log successful validation with IP
-    await kv.set(["security", "validations", now], {
-      key: tokenData.key,
-      token: token,
-      discord_id: tokenData.user_id,
-      executor: executor,
-      hwid: hwid,
-      executor_ip: executorIP,
-      player_name: player_name,
-      player_userid: player_userid,
-      other_scripts: other_scripts_running,
-      ip_match: true,
-      timestamp: now
-    });
+          // Get the executor's IP address
+          const executorIP = getClientIP(req);
+          
+          // Verify the token exists and is valid
+          const tokenEntry = await kv.get(["token", token]);
+          if (!tokenEntry.value) {
+            return jsonResponse({ error: "Token not found" }, 404);
+          }
 
-    // Return success with IP verification info
-    return jsonResponse({
-      success: true,
-      validated: true,
-      ip_verified: true,
-      key: tokenData.key,
-      discord_user: tokenData.username,
-      activation_data: {
-        discord_id: keyData.activation_data.discord_id,
-        discord_username: keyData.activation_data.discord_username,
-        activated_at: keyData.activation_data.activated_at,
-        executor: keyData.activation_data.executor,
-        hwid: keyData.activation_data.hwid,
-        player_name: keyData.activation_data.player_name,
-        validation_count: keyData.activation_data.validation_count || 1,
-        last_validation: keyData.activation_data.last_validation,
-        last_ip: executorIP
-      },
-      script_url: `https://api.napsy.dev/scripts/${token}`,
-      loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
-      message: "Token validated successfully - IP verified and execution allowed"
-    });
-
-  } catch (error) {
-    console.error("Token validation error:", error);
-    await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
-    return jsonResponse({ error: "Internal server error during validation" }, 500);
-  }
-}
-      // Enhanced activation endpoint
-if (url.pathname === '/activate' && req.method === 'POST') {
-  let body;
-  try { 
-    body = await req.json(); 
-  } catch (error) {
-    await logError(kv, "Invalid JSON in activation request", req, '/activate');
-    return jsonResponse({ error: "Invalid JSON" }, 400);
-  }
-
-  const { key, discord_id, discord_username } = body;
-  if (!key || !discord_id) return jsonResponse({ error: 'Key and discord_id required' }, 400);
-  if (!isValidKeyFormat(key)) {
-    await logError(kv, "Invalid key format", req, '/activate');
-    return jsonResponse({ error: 'Invalid key format' }, 400);
-  }
-  if (!isValidDiscordId(discord_id)) {
-    await logError(kv, "Invalid Discord ID", req, '/activate');
-    return jsonResponse({ error: 'Invalid Discord ID' }, 400);
-  }
-
-  const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
-  
-  // Enhanced blacklist check
-  const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
-  if (blacklistCheck.blacklisted) {
-    await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
-    return jsonResponse({ 
-      error: "Activation denied. Your account is blacklisted.", 
-      reason: blacklistCheck.entry?.reason, 
-      expires: blacklistCheck.entry?.expires_at 
-    }, 403);
-  }
-
-  const entry = await kv.get(['keys', key]);
-  if (!entry.value) {
-    await logError(kv, "Key not found", req, '/activate');
-    return jsonResponse({ error: 'Invalid key' }, 404);
-  }
-
-  const keyData = entry.value;
-  
-  // Check if key is expired (unactivated)
-  if (!keyData.activated && keyData.expires_at < Date.now()) {
-    await kv.delete(['keys', key]);
-    await logError(kv, "Expired key activation attempt", req, '/activate');
-    return jsonResponse({ error: 'Key has expired' }, 410);
-  }
-  
-  if (!keyData.workink_completed) {
-    await logError(kv, "Unverified key activation attempt", req, '/activate');
-    return jsonResponse({ error: 'Key not verified' }, 401);
-  }
-
-  // Handle renewal of activated key
-  if (keyData.activated) {
-    if (keyData.expires_at < Date.now()) {
-      const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-      
-      // Renew existing token
-      if (keyData.script_token) {
-        const tokenEntry = await kv.get(["token", keyData.script_token]);
-        if (tokenEntry.value) {
           const tokenData = tokenEntry.value;
-          tokenData.expires_at = tokenExpiresAt;
-          tokenData.renewed_at = Date.now();
-          tokenData.renewal_count = (tokenData.renewal_count || 0) + 1;
-          await kv.set(["token", keyData.script_token], tokenData);
+          
+          // Check if token is expired
+          if (tokenData.expires_at < Date.now()) {
+            await kv.delete(["token", token]);
+            return jsonResponse({ error: "Token expired" }, 410);
+          }
+
+          // Find the key associated with this token
+          const keyEntry = await kv.get(["keys", tokenData.key]);
+          if (!keyEntry.value) {
+            return jsonResponse({ error: "Associated key not found" }, 404);
+          }
+
+          const keyData = keyEntry.value;
+          
+          // IP VERIFICATION: Compare executor IP with original verification IP
+          const originalIP = keyData.workink_data?.ip;
+          const ipMatches = originalIP && executorIP === originalIP;
+          
+          if (!ipMatches) {
+            // Log the IP mismatch for security monitoring
+            await kv.set(["security", "ip_mismatch", Date.now()], {
+              key: tokenData.key,
+              token: token,
+              discord_id: tokenData.user_id,
+              original_ip: originalIP,
+              executor_ip: executorIP,
+              executor: executor,
+              timestamp: Date.now()
+            });
+            
+            return jsonResponse({ 
+              success: false, 
+              error: "IP address verification failed. Script execution blocked for security reasons.",
+              details: {
+                expected_ip: originalIP,
+                received_ip: executorIP,
+                ip_match: false
+              }
+            }, 403);
+          }
+
+          // Continue with normal validation if IP matches...
+          const now = Date.now();
+          if (!keyData.activation_data) {
+            keyData.activation_data = {
+              discord_id: tokenData.user_id,
+              discord_username: tokenData.username,
+              activated_at: now,
+              executor: executor,
+              hwid: hwid,
+              player_name: player_name,
+              player_userid: player_userid,
+              first_validation: now,
+              validations: [{
+                timestamp: now,
+                executor: executor,
+                hwid: hwid,
+                player_name: player_name,
+                player_userid: player_userid,
+                other_scripts: other_scripts_running,
+                ip: executorIP,
+                ip_match: true
+              }]
+            };
+          } else {
+            // Update existing activation with executor IP
+            keyData.activation_data.executor = executor || keyData.activation_data.executor;
+            keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
+            keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
+            keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
+            keyData.activation_data.last_validation = now;
+            keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
+            keyData.activation_data.last_ip = executorIP;
+            
+            // Track validation history with IP
+            if (!keyData.activation_data.validations) {
+              keyData.activation_data.validations = [];
+            }
+            keyData.activation_data.validations.push({
+              timestamp: now,
+              executor: executor,
+              hwid: hwid,
+              player_name: player_name,
+              player_userid: player_userid,
+              other_scripts: other_scripts_running,
+              ip: executorIP,
+              ip_match: true
+            });
+            
+            // Keep only last 10 validations
+            if (keyData.activation_data.validations.length > 10) {
+              keyData.activation_data.validations = keyData.activation_data.validations.slice(-10);
+            }
+          }
+          
+          await kv.set(["keys", tokenData.key], keyData);
+
+          // Enhanced blacklist checking with executor IP
+          const blacklistCheck = await isBlacklisted(
+            kv, 
+            tokenData.user_id, 
+            executorIP,
+            `Executor/${executor}`,
+            keyData,
+            { 
+              hwid: hwid,
+              executor: executor,
+              player_userid: player_userid
+            }
+          );
+
+          if (blacklistCheck.blacklisted) {
+            // Log the blocked attempt
+            await kv.set(["security", "blocked_attempts", now], {
+              key: tokenData.key,
+              token: token,
+              discord_id: tokenData.user_id,
+              executor: executor,
+              hwid: hwid,
+              executor_ip: executorIP,
+              reason: blacklistCheck.entry?.reason,
+              severity: blacklistCheck.severity,
+              timestamp: now
+            });
+            
+            return jsonResponse({ 
+              success: false, 
+              error: "Access denied. Your account or device is blacklisted.",
+              reason: blacklistCheck.entry?.reason,
+              severity: blacklistCheck.severity,
+              matched_identifier: blacklistCheck.matchedIdentifier
+            }, 403);
+          }
+
+          // Log successful validation with IP
+          await kv.set(["security", "validations", now], {
+            key: tokenData.key,
+            token: token,
+            discord_id: tokenData.user_id,
+            executor: executor,
+            hwid: hwid,
+            executor_ip: executorIP,
+            player_name: player_name,
+            player_userid: player_userid,
+            other_scripts: other_scripts_running,
+            ip_match: true,
+            timestamp: now
+          });
+
+          // Return success with IP verification info
+          return jsonResponse({
+            success: true,
+            validated: true,
+            ip_verified: true,
+            key: tokenData.key,
+            discord_user: tokenData.username,
+            activation_data: {
+              discord_id: keyData.activation_data.discord_id,
+              discord_username: keyData.activation_data.discord_username,
+              activated_at: keyData.activation_data.activated_at,
+              executor: keyData.activation_data.executor,
+              hwid: keyData.activation_data.hwid,
+              player_name: keyData.activation_data.player_name,
+              validation_count: keyData.activation_data.validation_count || 1,
+              last_validation: keyData.activation_data.last_validation,
+              last_ip: executorIP
+            },
+            script_url: `https://api.napsy.dev/scripts/${token}`,
+            loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
+            message: "Token validated successfully - IP verified and execution allowed"
+          });
+
+        } catch (error) {
+          console.error("Token validation error:", error);
+          await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
+          return jsonResponse({ error: "Internal server error during validation" }, 500);
         }
       }
-      
-      keyData.expires_at = Date.now() + KEY_EXPIRY_MS;
-      keyData.renewed_at = Date.now();
-      keyData.renewal_count = (keyData.renewal_count || 0) + 1;
-      
-      // Update activation data
-      if (keyData.activation_data) {
-        keyData.activation_data.last_renewal = Date.now();
-        keyData.activation_data.renewal_count = keyData.renewal_count;
+
+      // Enhanced activation endpoint
+      if (url.pathname === '/activate' && req.method === 'POST') {
+        let body;
+        try { 
+          body = await req.json(); 
+        } catch (error) {
+          await logError(kv, "Invalid JSON in activation request", req, '/activate');
+          return jsonResponse({ error: "Invalid JSON" }, 400);
+        }
+
+        const { key, discord_id, discord_username } = body;
+        if (!key || !discord_id) return jsonResponse({ error: 'Key and discord_id required' }, 400);
+        if (!isValidKeyFormat(key)) {
+          await logError(kv, "Invalid key format", req, '/activate');
+          return jsonResponse({ error: 'Invalid key format' }, 400);
+        }
+        if (!isValidDiscordId(discord_id)) {
+          await logError(kv, "Invalid Discord ID", req, '/activate');
+          return jsonResponse({ error: 'Invalid Discord ID' }, 400);
+        }
+
+        const sanitizedUsername = sanitizeInput(discord_username || 'Unknown');
+        
+        // Enhanced blacklist check
+        const blacklistCheck = await isBlacklisted(kv, discord_id, 'unknown', 'unknown');
+        if (blacklistCheck.blacklisted) {
+          await logError(kv, `Blacklisted user attempted activation: ${discord_id}`, req, '/activate');
+          return jsonResponse({ 
+            error: "Activation denied. Your account is blacklisted.", 
+            reason: blacklistCheck.entry?.reason, 
+            expires: blacklistCheck.entry?.expires_at 
+          }, 403);
+        }
+
+        const entry = await kv.get(['keys', key]);
+        if (!entry.value) {
+          await logError(kv, "Key not found", req, '/activate');
+          return jsonResponse({ error: 'Invalid key' }, 404);
+        }
+
+        const keyData = entry.value;
+        
+        // Check if key is expired (unactivated)
+        if (!keyData.activated && keyData.expires_at < Date.now()) {
+          await kv.delete(['keys', key]);
+          await logError(kv, "Expired key activation attempt", req, '/activate');
+          return jsonResponse({ error: 'Key has expired' }, 410);
+        }
+        
+        if (!keyData.workink_completed) {
+          await logError(kv, "Unverified key activation attempt", req, '/activate');
+          return jsonResponse({ error: 'Key not verified' }, 401);
+        }
+
+        // Handle renewal of activated key
+        if (keyData.activated) {
+          if (keyData.expires_at < Date.now()) {
+            const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+            
+            // Renew existing token
+            if (keyData.script_token) {
+              const tokenEntry = await kv.get(["token", keyData.script_token]);
+              if (tokenEntry.value) {
+                const tokenData = tokenEntry.value;
+                tokenData.expires_at = tokenExpiresAt;
+                tokenData.renewed_at = Date.now();
+                tokenData.renewal_count = (tokenData.renewal_count || 0) + 1;
+                await kv.set(["token", keyData.script_token], tokenData);
+              }
+            }
+            
+            keyData.expires_at = Date.now() + KEY_EXPIRY_MS;
+            keyData.renewed_at = Date.now();
+            keyData.renewal_count = (keyData.renewal_count || 0) + 1;
+            
+            // Update activation data
+            if (keyData.activation_data) {
+              keyData.activation_data.last_renewal = Date.now();
+              keyData.activation_data.renewal_count = keyData.renewal_count;
+            }
+            
+            await kv.set(['keys', key], keyData);
+            
+            // Log renewal
+            await kv.set(["activations", "renewals", Date.now()], {
+              key: key,
+              discord_id: discord_id,
+              renewed_at: Date.now(),
+              renewal_count: keyData.renewal_count
+            });
+            
+            return jsonResponse({
+              success: true, 
+              key: key, 
+              script_token: keyData.script_token,
+              script_url: `https://api.napsy.dev/scripts/${keyData.script_token}`,
+              token_expires_at: new Date(tokenExpiresAt).toISOString(),
+              activation_data: keyData.activation_data, 
+              is_renewal: true,
+              renewal_count: keyData.renewal_count,
+              message: 'Key renewed and token reactivated successfully'
+            });
+          } else {
+            return jsonResponse({ 
+              error: 'Key already activated', 
+              activation_data: keyData.activation_data,
+              expires_at: keyData.expires_at 
+            }, 409);
+          }
+        }
+
+        // New activation
+        const scriptToken = generateToken();
+        const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+        const now = Date.now();
+        
+        // Create token entry
+        await kv.set(['token', scriptToken], {
+          user_id: discord_id, 
+          username: sanitizedUsername, 
+          expires_at: tokenExpiresAt,
+          created_at: now, 
+          key: key,
+          activation_ip: keyData.workink_data?.ip || 'unknown'
+        });
+
+        // Enhanced activation data with all identifiers
+        keyData.activated = true;
+        keyData.script_token = scriptToken;
+        keyData.activation_data = {
+          discord_id: discord_id,
+          discord_username: sanitizedUsername,
+          activated_at: now,
+          ip: keyData.workink_data?.ip || 'unknown',
+          user_agent: keyData.workink_data?.user_agent || 'unknown',
+          // These will be populated when loader validates
+          executor: 'pending',
+          hwid: 'pending',
+          player_name: 'pending',
+          player_userid: 'pending',
+          first_validation: null,
+          validation_count: 0
+        };
+        
+        await kv.set(['keys', key], keyData);
+        
+        // Update user session
+        if (keyData.workink_data?.ip && keyData.workink_data?.user_agent) {
+          await updateUserSession(
+            kv, 
+            keyData.workink_data.ip, 
+            keyData.workink_data.user_agent, 
+            undefined, 
+            discord_id
+          );
+        }
+        
+        metrics.successfulActivations++;
+        
+        // Log activation
+        await kv.set(["activations", "logs", now], {
+          key: key,
+          discord_id: discord_id,
+          discord_username: sanitizedUsername,
+          token: scriptToken,
+          activated_at: now,
+          ip: keyData.workink_data?.ip || 'unknown'
+        });
+
+        return jsonResponse({
+          success: true, 
+          key: key, 
+          script_token: scriptToken,
+          script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
+          token_expires_at: new Date(tokenExpiresAt).toISOString(),
+          activation_data: keyData.activation_data, 
+          message: 'Key activated successfully. Use the script URL in your executor.'
+        });
+      }
+
+      // Enhanced check-key endpoint to show all linked data
+      if (url.pathname === '/check-key' && req.method === 'GET') {
+        const apiKey = req.headers.get('X-Admin-Api-Key');
+        if (apiKey !== ADMIN_API_KEY) {
+          await logError(kv, "Unauthorized key check attempt", req, '/check-key');
+          return jsonResponse({ error: 'Unauthorized' }, 401);
+        }
+        
+        const key = url.searchParams.get('key');
+        if (!key) return jsonResponse({ error: 'Key parameter required' }, 400);
+        if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
+        
+        const entry = await kv.get(['keys', key]);
+        if (!entry.value) return jsonResponse({ error: 'Key not found' }, 404);
+        
+        const keyData = entry.value;
+        
+        // Check if key is expired but not activated
+        if (!keyData.activated && keyData.expires_at < Date.now()) {
+          await kv.delete(['keys', key]);
+          return jsonResponse({ error: 'Key has expired' }, 410);
+        }
+        
+        // Enhanced response with all linked data
+        const response = {
+          // Basic key info
+          key: keyData.key,
+          created_at: keyData.created_at,
+          expires_at: keyData.expires_at,
+          activated: keyData.activated,
+          workink_completed: keyData.workink_completed,
+          admin_generated: keyData.admin_generated || false,
+          
+          // Token info
+          script_token: keyData.script_token,
+          
+          // Workink data (verification)
+          workink_data: keyData.workink_data ? {
+            ip: keyData.workink_data.ip,
+            user_agent: keyData.workink_data.user_agent,
+            completed_at: keyData.workink_data.completed_at,
+            privacy_agreed: keyData.workink_data.privacy_agreed,
+            age_verified: keyData.workink_data.age_verified
+          } : null,
+          
+          // Activation data (what you're looking for)
+          activation_data: keyData.activation_data ? {
+            discord_id: keyData.activation_data.discord_id,
+            discord_username: keyData.activation_data.discord_username,
+            activated_at: keyData.activation_data.activated_at,
+            
+            // Linked identifiers from loader
+            executor: keyData.activation_data.executor,
+            hwid: keyData.activation_data.hwid,
+            player_name: keyData.activation_data.player_name,
+            player_userid: keyData.activation_data.player_userid,
+            
+            // Validation tracking
+            first_validation: keyData.activation_data.first_validation,
+            last_validation: keyData.activation_data.last_validation,
+            validation_count: keyData.activation_data.validation_count || 0,
+            validations: keyData.activation_data.validations || [],
+            
+            // Additional info
+            ip: keyData.activation_data.ip,
+            user_agent: keyData.activation_data.user_agent
+          } : null,
+          
+          // Renewal info
+          renewed_at: keyData.renewed_at,
+          renewal_count: keyData.renewal_count || 0,
+          
+          // Status info
+          is_expired: keyData.expires_at < Date.now(),
+          is_active: keyData.activated && keyData.expires_at > Date.now(),
+          days_until_expiry: Math.ceil((keyData.expires_at - Date.now()) / (24 * 60 * 60 * 1000))
+        };
+        
+        return jsonResponse(response);
+      }
+
+      // Admin endpoints
+      if (url.pathname === '/admin/blacklist' && req.method === 'GET') {
+        return await handleAdminBlacklist(kv, req);
       }
       
-      await kv.set(['keys', key], keyData);
-      
-      // Log renewal
-      await kv.set(["activations", "renewals", Date.now()], {
-        key: key,
-        discord_id: discord_id,
-        renewed_at: Date.now(),
-        renewal_count: keyData.renewal_count
-      });
-      
-      return jsonResponse({
-        success: true, 
-        key: key, 
-        script_token: keyData.script_token,
-        script_url: `https://api.napsy.dev/scripts/${keyData.script_token}`,
-        token_expires_at: new Date(tokenExpiresAt).toISOString(),
-        activation_data: keyData.activation_data, 
-        is_renewal: true,
-        renewal_count: keyData.renewal_count,
-        message: 'Key renewed and token reactivated successfully'
-      });
-    } else {
-      return jsonResponse({ 
-        error: 'Key already activated', 
-        activation_data: keyData.activation_data,
-        expires_at: keyData.expires_at 
-      }, 409);
+      if (url.pathname === '/admin/user-info' && req.method === 'GET') {
+        return await handleAdminUserInfo(kv, req);
+      }
+
+      return new Response("Not found", { status: 404 });
     }
+
+    // Default response for unknown domains
+    return new Response("Domain not configured", { status: 404 });
+  } catch (error) {
+    console.error("Handler error:", error);
+    await logError(kv, `Handler error: ${error.message}`, req, url.pathname);
+    return jsonResponse({ error: "Internal server error" }, 500);
+  } finally {
+    kv.close();
   }
-
-  // New activation
-  const scriptToken = generateToken();
-  const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
-  const now = Date.now();
-  
-  // Create token entry
-  await kv.set(['token', scriptToken], {
-    user_id: discord_id, 
-    username: sanitizedUsername, 
-    expires_at: tokenExpiresAt,
-    created_at: now, 
-    key: key,
-    activation_ip: keyData.workink_data?.ip || 'unknown'
-  });
-
-  // Enhanced activation data with all identifiers
-  keyData.activated = true;
-  keyData.script_token = scriptToken;
-  keyData.activation_data = {
-    discord_id: discord_id,
-    discord_username: sanitizedUsername,
-    activated_at: now,
-    ip: keyData.workink_data?.ip || 'unknown',
-    user_agent: keyData.workink_data?.user_agent || 'unknown',
-    // These will be populated when loader validates
-    executor: 'pending',
-    hwid: 'pending',
-    player_name: 'pending',
-    player_userid: 'pending',
-    first_validation: null,
-    validation_count: 0
-  };
-  
-  await kv.set(['keys', key], keyData);
-  
-  // Update user session
-  if (keyData.workink_data?.ip && keyData.workink_data?.user_agent) {
-    await updateUserSession(
-      kv, 
-      keyData.workink_data.ip, 
-      keyData.workink_data.user_agent, 
-      undefined, 
-      discord_id
-    );
-  }
-  
-  metrics.successfulActivations++;
-  
-  // Log activation
-  await kv.set(["activations", "logs", now], {
-    key: key,
-    discord_id: discord_id,
-    discord_username: sanitizedUsername,
-    token: scriptToken,
-    activated_at: now,
-    ip: keyData.workink_data?.ip || 'unknown'
-  });
-
-  return jsonResponse({
-    success: true, 
-    key: key, 
-    script_token: scriptToken,
-    script_url: `https://api.napsy.dev/scripts/${scriptToken}`,
-    token_expires_at: new Date(tokenExpiresAt).toISOString(),
-    activation_data: keyData.activation_data, 
-    message: 'Key activated successfully. Use the script URL in your executor.'
-  });
 }
-// Enhanced check-key endpoint to show all linked data
-if (url.pathname === '/check-key' && req.method === 'GET') {
-  const apiKey = req.headers.get('X-Admin-Api-Key');
-  if (apiKey !== ADMIN_API_KEY) {
-    await logError(kv, "Unauthorized key check attempt", req, '/check-key');
-    return jsonResponse({ error: 'Unauthorized' }, 401);
-  }
-  
-  const key = url.searchParams.get('key');
-  if (!key) return jsonResponse({ error: 'Key parameter required' }, 400);
-  if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
-  
-  const entry = await kv.get(['keys', key]);
-  if (!entry.value) return jsonResponse({ error: 'Key not found' }, 404);
-  
-  const keyData = entry.value;
-  
-  // Check if key is expired but not activated
-  if (!keyData.activated && keyData.expires_at < Date.now()) {
-    await kv.delete(['keys', key]);
-    return jsonResponse({ error: 'Key has expired' }, 410);
-  }
-  
-  // Enhanced response with all linked data
-  const response = {
-    // Basic key info
-    key: keyData.key,
-    created_at: keyData.created_at,
-    expires_at: keyData.expires_at,
-    activated: keyData.activated,
-    workink_completed: keyData.workink_completed,
-    admin_generated: keyData.admin_generated || false,
-    
-    // Token info
-    script_token: keyData.script_token,
-    
-    // Workink data (verification)
-    workink_data: keyData.workink_data ? {
-      ip: keyData.workink_data.ip,
-      user_agent: keyData.workink_data.user_agent,
-      completed_at: keyData.workink_data.completed_at,
-      privacy_agreed: keyData.workink_data.privacy_agreed,
-      age_verified: keyData.workink_data.age_verified
-    } : null,
-    
-    // Activation data (what you're looking for)
-    activation_data: keyData.activation_data ? {
-      discord_id: keyData.activation_data.discord_id,
-      discord_username: keyData.activation_data.discord_username,
-      activated_at: keyData.activation_data.activated_at,
-      
-      // Linked identifiers from loader
-      executor: keyData.activation_data.executor,
-      hwid: keyData.activation_data.hwid,
-      player_name: keyData.activation_data.player_name,
-      player_userid: keyData.activation_data.player_userid,
-      
-      // Validation tracking
-      first_validation: keyData.activation_data.first_validation,
-      last_validation: keyData.activation_data.last_validation,
-      validation_count: keyData.activation_data.validation_count || 0,
-      validations: keyData.activation_data.validations || [],
-      
-      // Additional info
-      ip: keyData.activation_data.ip,
-      user_agent: keyData.activation_data.user_agent
-    } : null,
-    
-    // Renewal info
-    renewed_at: keyData.renewed_at,
-    renewal_count: keyData.renewal_count || 0,
-    
-    // Status info
-    is_expired: keyData.expires_at < Date.now(),
-    is_active: keyData.activated && keyData.expires_at > Date.now(),
-    days_until_expiry: Math.ceil((keyData.expires_at - Date.now()) / (24 * 60 * 60 * 1000))
-  };
-  
-  return jsonResponse(response);
-}
+
 // For local development
 if (import.meta.main) {
   console.log("Lunith Key System starting locally on port 8000...");
-  Deno.serve(handler, { port: 8000 });
+  Deno.serve({ port: 8000 }, handler);
 }
