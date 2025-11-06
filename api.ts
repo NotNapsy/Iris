@@ -1788,24 +1788,31 @@ export async function handler(req: Request): Promise<Response> {
         return jsonResponse({ success: true, keys: keys });
       }
       // Check key status
-      if (url.pathname === '/check-key' && req.method === 'GET') {
-        const apiKey = req.headers.get('X-Admin-Api-Key');
-        if (apiKey !== ADMIN_API_KEY) {
-          await logError(kv, "Unauthorized key check attempt", req, '/check-key');
-          return jsonResponse({ error: 'Unauthorized' }, 401);
-        }
-        const key = url.searchParams.get('key');
-        if (!key) return jsonResponse({ error: 'Key parameter required' }, 400);
-        if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
-        const entry = await kv.get(['keys', key]);
-        if (!entry.value) return jsonResponse({ error: 'Key not found' }, 404);
-        const keyData = entry.value;
-        if (!keyData.activated && keyData.expires_at < Date.now()) {
-          await kv.delete(['keys', key]);
-          return jsonResponse({ error: 'Key has expired' }, 410);
-        }
-        return jsonResponse({ key: keyData });
-      }
+      // Check key status - FIXED VERSION
+if (url.pathname === '/check-key' && req.method === 'GET') {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    await logError(kv, "Unauthorized key check attempt", req, '/check-key');
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+  const key = url.searchParams.get('key');
+  if (!key) return jsonResponse({ error: 'Key parameter required' }, 400);
+  if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
+  
+  const entry = await kv.get(['keys', key]);
+  if (!entry.value) return jsonResponse({ error: 'Key not found' }, 404);
+  
+  const keyData = entry.value;
+  
+  // Check if key is expired but not activated
+  if (!keyData.activated && keyData.expires_at < Date.now()) {
+    await kv.delete(['keys', key]);
+    return jsonResponse({ error: 'Key has expired' }, 410);
+  }
+  
+  // RETURN THE KEY DATA DIRECTLY, NOT WRAPPED IN 'key' PROPERTY
+  return jsonResponse(keyData);
+}
 
       // Admin endpoints
       if (url.pathname === '/admin/blacklist') return await handleAdminBlacklist(kv, req);
