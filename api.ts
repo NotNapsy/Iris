@@ -73,7 +73,7 @@ interface UserSession {
 }
 
 // Lunith Script Content
-const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
+const SCRIPT_CONTENT_BASE = `print("Lunith Loader Initialized")
 
 -- Services
 local Players = game:GetService("Players")
@@ -84,6 +84,9 @@ if not LocalPlayer then
     Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
     LocalPlayer = Players.LocalPlayer
 end
+
+-- Token is dynamically injected by the server
+local TOKEN = "{{TOKEN}}"
 
 -- Get Executor name using Wave's identifyexecutor
 local function getExecutor()
@@ -125,43 +128,14 @@ local function checkRunningScripts()
     return 0
 end
 
--- Extract token from the actual script source URL
-local function extractToken()
-    -- Method 1: Check if this is being executed via loadstring from a URL
-    local debugInfo = debug.getinfo(1, "S")
-    if debugInfo and debugInfo.source then
-        local source = debugInfo.source
-        print("Debug source:", source)
-        
-        -- Look for token in the source URL
-        if source:find("https://api.napsy.dev/scripts/") then
-            local token = source:match("scripts/([%w%-_]+)")
-            if token then
-                return token
-            end
-        end
-    end
-    
-    -- Method 2: If executing directly, we need to get the token from the user
-    print("⚠️ Running in direct mode - token not found in URL")
-    print("Please use the full loader URL: https://api.napsy.dev/scripts/YOUR_TOKEN")
-    
-    return "direct_execution"
-end
-
 -- Validate token and send identification data
-local function validateTokenAndIdentify(token)
-    -- If we're in direct execution mode, we can't validate properly
-    if token == "direct_execution" then
-        return {success = false, error = "Please use the full loader URL from your Discord DMs"}
-    end
-    
+local function validateTokenAndIdentify()
     local executor = getExecutor()
     local hwid = getHWID()
     local otherScriptsCount = checkRunningScripts()
     
     local identificationData = {
-        token = token,
+        token = TOKEN,
         executor = executor,
         hwid = hwid,
         player_name = LocalPlayer.Name,
@@ -188,7 +162,7 @@ local function validateTokenAndIdentify(token)
                 Url = "https://api.napsy.dev/validate-token",
                 Method = "POST",
                 Headers = {
-                    ["Content-Type"] = application/json
+                    ["Content-Type"] = "application/json"
                 },
                 Body = jsonData
             })
@@ -216,58 +190,43 @@ end
 
 -- Main execution
 local function main()
-    print("🚀 Starting Lunith verification...")
+    print("Starting Lunith verification...")
     
-    -- Get Executor and HWID first (to verify they work)
+    -- Get Executor and HWID first
     local executor = getExecutor()
     local hwid = getHWID()
     
-    print("🔍 Executor:", executor)
-    print("🆔 HWID:", hwid)
-    
-    -- Extract token
-    local token = extractToken()
-    print("🔑 Token:", token)
-    
-    print("👤 Player:", LocalPlayer.Name, "(ID:", LocalPlayer.UserId, ")")
+    print("Executor:", executor)
+    print("HWID:", hwid)
+    print("Token:", TOKEN)
+    print("Player:", LocalPlayer.Name, "(ID:", LocalPlayer.UserId, ")")
     
     -- Check for other scripts running
     local otherScripts = checkRunningScripts()
     if otherScripts > 0 then
-        print("⚠️ Warning: " .. otherScripts .. " other scripts detected")
+        print("Warning: " .. otherScripts .. " other scripts detected")
     end
     
     -- Validate token
-    if token ~= "direct_execution" then
-        print("🔐 Validating token and sending identification data...")
-        local validationResult = validateTokenAndIdentify(token)
-        
-        if validationResult.success then
-            print("✅ Token validation successful!")
-            print("📋 Executor and HWID have been linked to your key")
-            return "🎉 Lunith loaded successfully for " .. LocalPlayer.Name
-        else
-            warn("❌ Token validation failed:", validationResult.error)
-            return "Lunith validation failed: " .. validationResult.error
-        end
+    print("Validating token and sending identification data...")
+    local validationResult = validateTokenAndIdentify()
+    
+    if validationResult.success then
+        print("Token validation successful!")
+        print("Executor and HWID have been linked to your key")
+        return "Lunith loaded successfully for " .. LocalPlayer.Name
     else
-        -- Direct execution mode - just show info
-        print("ℹ️ Running in direct execution mode")
-        print("💡 To activate properly, use the loader URL from your Discord DMs")
-        print("📝 Your identification info:")
-        print("   - Executor: " .. executor)
-        print("   - HWID: " .. hwid)
-        print("   - Player: " .. LocalPlayer.Name)
-        return "Lunith identification complete - Use proper loader URL for full activation"
+        warn("❌ Token validation failed:", validationResult.error)
+        return "Lunith validation failed: " .. validationResult.error
     end
 end
 
 -- Safe execution with error handling
 local success, result = pcall(main)
 if success then
-    print(result or "✅ Lunith execution completed")
+    print(result or "Lunith execution completed")
 else
-    warn("💥 Lunith execution error:", result)
+    warn("Lunith execution error:", result)
     print("Please contact support if this error persists")
 end
 
@@ -1856,16 +1815,27 @@ export async function handler(req: Request): Promise<Response> {
       }
       if (url.pathname === '/health' && req.method === 'GET') return jsonResponse({ status: 'online', service: 'script-api', domain: 'api.napsy.dev', timestamp: new Date().toISOString(), metrics });
       if (url.pathname.startsWith('/scripts/') && req.method === 'GET') {
-        const token = url.pathname.split('/')[2];
-        if (!token) return new Response("Token required", { status: 400 });
-        const data = await kv.get(["token", token]);
-        if (!data.value) return new Response("Token not found", { status: 404 });
-        if (data.value.expires_at < Date.now()) {
-          await kv.delete(["token", token]);
-          return new Response("Token expired", { status: 410 });
-        }
-        return new Response(SCRIPT_CONTENT, { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders } });
-      }
+  const token = url.pathname.split('/')[2];
+  if (!token) return new Response("Token required", { status: 400 });
+  
+  const data = await kv.get(["token", token]);
+  if (!data.value) return new Response("Token not found", { status: 404 });
+  
+  if (data.value.expires_at < Date.now()) {
+    await kv.delete(["token", token]);
+    return new Response("Token expired", { status: 410 });
+  }
+  
+  // Inject the actual token into the script content
+  const scriptContent = SCRIPT_CONTENT_BASE.replace('"{{TOKEN}}"', `"${token}"`);
+  
+  return new Response(scriptContent, { 
+    headers: { 
+      "Content-Type": "text/plain; charset=utf-8", 
+      ...corsHeaders 
+    } 
+  });
+}
 
       // Generate multiple keys endpoint
 // In the generate-keys endpoint, modify it to accept expire_time
