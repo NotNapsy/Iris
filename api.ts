@@ -1775,6 +1775,7 @@ export async function handler(req: Request): Promise<Response> {
         });
       }
 
+      // Add to your API endpoints in api.ts
       if (url.pathname === '/check-all-keys' && req.method === 'GET') {
       const apiKey = req.headers.get('X-Admin-Api-Key');
       if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -1784,9 +1785,8 @@ export async function handler(req: Request): Promise<Response> {
         keys.push(entry.value);
       }
 
-      return jsonResponse({ success: true, keys: keys });
+        return jsonResponse({ success: true, keys: keys });
       }
-
       // Check key status
       if (url.pathname === '/check-key' && req.method === 'GET') {
         const apiKey = req.headers.get('X-Admin-Api-Key');
