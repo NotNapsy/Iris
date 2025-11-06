@@ -12,7 +12,7 @@ const RATE_LIMIT = {
 };
 
 const AUTO_BLACKLIST_CONFIG = {
-  MULTI_IP_THRESHOLD: 1, // Number of unique IPs allowed per token
+  MULTI_IP_THRESHOLD: 2, // Number of unique IPs allowed per token
   ESCALATION_BASE_DAYS: 1, // Start with 1 day ban
   ESCALATION_MULTIPLIER: 2, // Double each time
   MAX_ESCALATION_DAYS: 365, // Cap at 1 year
