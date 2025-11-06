@@ -1679,6 +1679,56 @@ export async function handler(req: Request): Promise<Response> {
         return new Response(SCRIPT_CONTENT, { headers: { "Content-Type": "text/plain; charset=utf-8", ...corsHeaders } });
       }
 
+      // Generate multiple keys endpoint
+if (url.pathname === '/generate-keys' && req.method === 'POST') {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
+  }
+
+  const { amount } = body;
+  if (!amount || amount < 1 || amount > 50) {
+    return jsonResponse({ error: 'Amount must be between 1 and 50' }, 400);
+  }
+
+  try {
+    const keys = [];
+    
+    for (let i = 0; i < amount; i++) {
+      const key = generateFormattedKey();
+      const expiresAt = Date.now() + KEY_EXPIRY_MS;
+      
+      const keyData = {
+        key,
+        created_at: Date.now(),
+        expires_at: expiresAt,
+        activated: false,
+        workink_completed: true, // These keys need verification
+        admin_generated: true
+      };
+      
+      // Store the key in the database
+      await kv.set(["keys", key], keyData);
+      keys.push(key);
+    }
+
+    return jsonResponse({
+      success: true,
+      keys: keys,
+      message: `Generated ${amount} keys successfully`,
+      expires_at: new Date(Date.now() + KEY_EXPIRY_MS).toISOString()
+    });
+  } catch (error) {
+    console.error('Generate keys error:', error);
+    return jsonResponse({ error: 'Failed to generate keys' }, 500);
+  }
+}
+
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
         let body;
