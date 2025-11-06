@@ -2531,6 +2531,10 @@ const keySiteHtml = `<!DOCTYPE html>
             transform: translateY(-2px); 
             box-shadow: 0 6px 20px rgba(67, 181, 129, 0.3);
         }
+        .checkbox-group { margin: 20px 0; }
+        .checkbox-item { display: flex; align-items: center; margin: 15px 0; }
+        .checkbox-item input[type="checkbox"] { margin-right: 12px; transform: scale(1.2); }
+        .checkbox-label { color: #e8e8e8; font-size: 14px; cursor: pointer; }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2745,8 +2749,8 @@ const keySiteHtml = `<!DOCTYPE html>
         function updateProgress(completed) {
             currentProgress = completed;
             const percentage = (completed / TOTAL_CHECKPOINTS) * 100;
-            document.getElementById('progressFill').style.width = `${percentage}%`; // This should be inside the function
-          }
+            document.getElementById('progressFill').style.width = percentage + '%';
+        }
 
         function renderCheckpoints(completed) {
             const container = document.getElementById('checkpointsContainer');
@@ -2754,21 +2758,20 @@ const keySiteHtml = `<!DOCTYPE html>
             
             for (let i = 0; i < TOTAL_CHECKPOINTS; i++) {
                 const checkpoint = document.createElement('div');
-                checkpoint.className = `checkpoint-item ${i < completed ? 'checkpoint-completed' : ''}`;
+                checkpoint.className = 'checkpoint-item ' + (i < completed ? 'checkpoint-completed' : '');
                 
-                checkpoint.innerHTML = `
-                    <strong>Verification Step ${i + 1}</strong>
-                    <div class="checkpoint-status ${i < completed ? 'status-completed' : 'status-pending'}">
-                        ${i < completed ? '✓ Completed' : '⏳ Pending'}
-                    </div>
-                `;
+                checkpoint.innerHTML = 
+                    '<strong>Verification Step ' + (i + 1) + '</strong>' +
+                    '<div class="checkpoint-status ' + (i < completed ? 'status-completed' : 'status-pending') + '">' +
+                        (i < completed ? '✓ Completed' : '⏳ Pending') +
+                    '</div>';
                 
                 container.appendChild(checkpoint);
             }
         }
 
         function showCurrentCheckpoint(link, stepNumber) {
-            document.getElementById('currentStepDesc').textContent = `Step ${stepNumber} of ${TOTAL_CHECKPOINTS}`;
+            document.getElementById('currentStepDesc').textContent = 'Step ' + stepNumber + ' of ' + TOTAL_CHECKPOINTS;
             document.getElementById('workinkLink').href = link;
             document.getElementById('currentCheckpoint').classList.remove('hidden');
         }
@@ -2909,7 +2912,7 @@ const keySiteHtml = `<!DOCTYPE html>
                 if (result.success) {
                     if (result.checkpoint_completed) {
                         // Check progress will be handled by the interval
-                        console.log(`Checkpoint completed: ${result.current_checkpoint}/${result.total_checkpoints}`);
+                        console.log('Checkpoint completed: ' + result.current_checkpoint + '/' + result.total_checkpoints);
                     } else if (result.key) {
                         showKey(result);
                     }
