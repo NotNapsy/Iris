@@ -1902,6 +1902,7 @@ if (url.pathname === '/generate-keys' && req.method === 'POST') {
 
       // Enhanced validation endpoint in api.ts
 // Enhanced validation endpoint in api.ts
+// In the /validate-token endpoint, add IP capture:
 if (url.pathname === '/validate-token' && req.method === 'POST') {
   try {
     let body;
@@ -1925,6 +1926,9 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
       return jsonResponse({ error: "Invalid token" }, 400);
     }
 
+    // Get the executor's IP address
+    const executorIP = getClientIP(req); // Use your existing getClientIP function
+    
     // Verify the token exists and is valid
     const tokenEntry = await kv.get(["token", token]);
     if (!tokenEntry.value) {
@@ -1947,7 +1951,34 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
 
     const keyData = keyEntry.value;
     
-    // Enhanced: Update key with executor and HWID data
+    // IP VERIFICATION: Compare executor IP with original verification IP
+    const originalIP = keyData.workink_data?.ip;
+    const ipMatches = originalIP && executorIP === originalIP;
+    
+    if (!ipMatches) {
+      // Log the IP mismatch for security monitoring
+      await kv.set(["security", "ip_mismatch", Date.now()], {
+        key: tokenData.key,
+        token: token,
+        discord_id: tokenData.user_id,
+        original_ip: originalIP,
+        executor_ip: executorIP,
+        executor: executor,
+        timestamp: Date.now()
+      });
+      
+      return jsonResponse({ 
+        success: false, 
+        error: "IP address verification failed. Script execution blocked for security reasons.",
+        details: {
+          expected_ip: originalIP,
+          received_ip: executorIP,
+          ip_match: false
+        }
+      }, 403);
+    }
+
+    // Continue with normal validation if IP matches...
     const now = Date.now();
     if (!keyData.activation_data) {
       keyData.activation_data = {
@@ -1965,19 +1996,22 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
           hwid: hwid,
           player_name: player_name,
           player_userid: player_userid,
-          other_scripts: other_scripts_running
+          other_scripts: other_scripts_running,
+          ip: executorIP, // Store the executor IP
+          ip_match: true
         }]
       };
     } else {
-      // Update existing activation with executor and HWID
+      // Update existing activation with executor IP
       keyData.activation_data.executor = executor || keyData.activation_data.executor;
       keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
       keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
       keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
       keyData.activation_data.last_validation = now;
       keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
+      keyData.activation_data.last_ip = executorIP;
       
-      // Track validation history
+      // Track validation history with IP
       if (!keyData.activation_data.validations) {
         keyData.activation_data.validations = [];
       }
@@ -1987,7 +2021,9 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
         hwid: hwid,
         player_name: player_name,
         player_userid: player_userid,
-        other_scripts: other_scripts_running
+        other_scripts: other_scripts_running,
+        ip: executorIP,
+        ip_match: true
       });
       
       // Keep only last 10 validations
@@ -1998,11 +2034,11 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
     
     await kv.set(["keys", tokenData.key], keyData);
 
-    // Enhanced blacklist checking with executor and HWID
+    // Enhanced blacklist checking with executor IP
     const blacklistCheck = await isBlacklisted(
       kv, 
       tokenData.user_id, 
-      'unknown',
+      executorIP, // Use executor IP for blacklist check
       `Executor/${executor}`,
       keyData,
       { 
@@ -2020,7 +2056,7 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
         discord_id: tokenData.user_id,
         executor: executor,
         hwid: hwid,
-        player_name: player_name,
+        executor_ip: executorIP,
         reason: blacklistCheck.entry?.reason,
         severity: blacklistCheck.severity,
         timestamp: now
@@ -2035,23 +2071,26 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
       }, 403);
     }
 
-    // Log successful validation
+    // Log successful validation with IP
     await kv.set(["security", "validations", now], {
       key: tokenData.key,
       token: token,
       discord_id: tokenData.user_id,
       executor: executor,
       hwid: hwid,
+      executor_ip: executorIP,
       player_name: player_name,
       player_userid: player_userid,
       other_scripts: other_scripts_running,
+      ip_match: true,
       timestamp: now
     });
 
-    // Return success with detailed information
+    // Return success with IP verification info
     return jsonResponse({
       success: true,
       validated: true,
+      ip_verified: true,
       key: tokenData.key,
       discord_user: tokenData.username,
       activation_data: {
@@ -2062,11 +2101,12 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
         hwid: keyData.activation_data.hwid,
         player_name: keyData.activation_data.player_name,
         validation_count: keyData.activation_data.validation_count || 1,
-        last_validation: keyData.activation_data.last_validation
+        last_validation: keyData.activation_data.last_validation,
+        last_ip: executorIP
       },
       script_url: `https://api.napsy.dev/scripts/${token}`,
       loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
-      message: "Token validated successfully - Executor and HWID linked to key"
+      message: "Token validated successfully - IP verified and execution allowed"
     });
 
   } catch (error) {
