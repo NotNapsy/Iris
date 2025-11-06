@@ -33,21 +33,34 @@ let metrics = {
   refills: 0
 };
 
-// Enhanced Blacklist System
 interface BlacklistEntry {
   discord_id: string;
   ip: string;
   hwid?: string;
   vmac?: string;
   user_agent?: string;
+  session_id?: string;
+  cookies_hash?: string; 
+  canvas_fingerprint?: string;
+  webgl_fingerprint?: string; 
+  fonts_fingerprint?: string;
   reason: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'PERMANENT'; 
   created_at: number;
   expires_at?: number;
   created_by: string;
   identifiers: string[];
+  notes?: string;
 }
 
-// User Session Management
+const DATA_RETENTION = {
+  NORMAL_KEYS: 24 * 60 * 60 * 1000, // 24 hours for normal keys
+  BLACKLIST_TEMPORARY: 30 * 24 * 60 * 60 * 1000, // 30 days for temp blacklist
+  BLACKLIST_PERMANENT: 365 * 24 * 60 * 60 * 1000 * 10, // 10 years (effectively permanent)
+  SESSIONS: 7 * 24 * 60 * 60 * 1000, // 7 days for sessions
+  ERROR_LOGS: 30 * 24 * 60 * 60 * 1000, // 30 days for error logs
+};
+
 interface UserSession {
   ip: string;
   user_agent: string;
@@ -97,13 +110,15 @@ function parseDuration(durationStr: string): number | null {
 }
 
 // Get all identifiers from a request/key data
-function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any): string[] {
+function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any, fingerprintData?: any): string[] {
   const identifiers: string[] = [];
   
+  // Core identifiers
   if (discordId && discordId !== 'unknown') identifiers.push(`discord:${discordId}`);
   if (ip && ip !== 'unknown') identifiers.push(`ip:${ip}`);
   if (userAgent && userAgent !== 'unknown') identifiers.push(`user_agent:${userAgent}`);
   
+  // Hardware identifiers from activated keys
   if (keyData?.activation_data?.hwid) {
     identifiers.push(`hwid:${keyData.activation_data.hwid}`);
   }
@@ -111,11 +126,33 @@ function getAllIdentifiers(discordId: string, ip: string, userAgent: string, key
     identifiers.push(`vmac:${keyData.activation_data.vmac}`);
   }
   
+  // Session identifiers
   if (keyData?.workink_data?.session_id) {
     identifiers.push(`session:${keyData.workink_data.session_id}`);
   }
   
-  return identifiers;
+  // Browser fingerprinting (if available)
+  if (fingerprintData) {
+    if (fingerprintData.cookies_hash) {
+      identifiers.push(`cookies:${fingerprintData.cookies_hash}`);
+    }
+    if (fingerprintData.canvas_fingerprint) {
+      identifiers.push(`canvas:${fingerprintData.canvas_fingerprint}`);
+    }
+    if (fingerprintData.webgl_fingerprint) {
+      identifiers.push(`webgl:${fingerprintData.webgl_fingerprint}`);
+    }
+    if (fingerprintData.fonts_fingerprint) {
+      identifiers.push(`fonts:${fingerprintData.fonts_fingerprint}`);
+    }
+    
+    // Combined fingerprint for stronger identification
+    if (fingerprintData.composite_fingerprint) {
+      identifiers.push(`composite:${fingerprintData.composite_fingerprint}`);
+    }
+  }
+  
+  return [...new Set(identifiers)]; // Remove duplicates
 }
 
 // Enhanced blacklist check with admin bypass
@@ -123,12 +160,12 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
   blacklisted: boolean; 
   entry?: BlacklistEntry;
   matchedIdentifier?: string;
+  severity?: string;
 }> {
   metrics.blacklistChecks++;
   
-  // Admin bypass - ADD YOUR DISCORD ID HERE
+  // Admin bypass
   const SUPER_ADMINS: string[] = ['YOUR_DISCORD_ID_HERE'];
-  
   if (discordId !== 'unknown' && SUPER_ADMINS.includes(discordId)) {
     return { blacklisted: false };
   }
@@ -140,15 +177,18 @@ async function isBlacklisted(kv: Deno.Kv, discordId: string, ip: string, userAge
     if (entry.value) {
       const blacklistEntry = entry.value as BlacklistEntry;
       
+      // Check if temporary entry has expired
       if (blacklistEntry.expires_at && Date.now() > blacklistEntry.expires_at) {
         await kv.delete(["blacklist", "identifiers", identifier]);
+        await cleanupExpiredBlacklistEntries(kv);
         continue;
       }
       
       return { 
         blacklisted: true, 
         entry: blacklistEntry,
-        matchedIdentifier: identifier
+        matchedIdentifier: identifier,
+        severity: blacklistEntry.severity
       };
     }
   }
@@ -164,14 +204,40 @@ async function addToBlacklist(
   userAgent: string,
   reason: string, 
   createdBy: string, 
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'PERMANENT' = 'MEDIUM',
   durationMs?: number,
-  keyData?: any
-): Promise<{ success: boolean; identifiers: string[]; linked_sessions: number }> {
+  keyData?: any,
+  fingerprintData?: any,
+  notes?: string
+): Promise<{ success: boolean; identifiers: string[]; linked_sessions: number; duration: string }> {
   const now = Date.now();
-  const expires_at = durationMs ? now + durationMs : undefined;
   
-  let identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData);
+  // Set expiration based on severity
+  let expires_at: number | undefined;
+  let durationText = 'Permanent';
   
+  switch (severity) {
+    case 'LOW':
+      expires_at = now + (durationMs || 7 * 24 * 60 * 60 * 1000); // 7 days default
+      durationText = `${durationMs ? durationMs / (24 * 60 * 60 * 1000) : 7} days`;
+      break;
+    case 'MEDIUM':
+      expires_at = now + (durationMs || DATA_RETENTION.BLACKLIST_TEMPORARY); // 30 days default
+      durationText = `${durationMs ? durationMs / (24 * 60 * 60 * 1000) : 30} days`;
+      break;
+    case 'HIGH':
+      expires_at = now + (durationMs || 90 * 24 * 60 * 60 * 1000); // 90 days default
+      durationText = `${durationMs ? durationMs / (24 * 60 * 60 * 1000) : 90} days`;
+      break;
+    case 'PERMANENT':
+      expires_at = now + DATA_RETENTION.BLACKLIST_PERMANENT; // 10 years
+      durationText = 'Permanent';
+      break;
+  }
+
+  let identifiers = getAllIdentifiers(discordId, ip, userAgent, keyData, fingerprintData);
+  
+  // Find and link all related sessions
   let sessionCount = 0;
   try {
     const linkedSessions = await findUserSessions(kv, discordId);
@@ -183,6 +249,11 @@ async function addToBlacklist(
       const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
       identifiers.push(`session:${sessionId}`);
       sessionCount++;
+      
+      // Also blacklist all keys from these sessions
+      for (const key of session.keys_generated) {
+        identifiers.push(`key:${key}`);
+      }
     }
   } catch (error) {
     console.error('Error processing linked sessions for blacklist:', error);
@@ -195,22 +266,47 @@ async function addToBlacklist(
     ip: ip,
     user_agent: userAgent,
     reason,
+    severity,
     created_at: now,
     expires_at,
     created_by: createdBy,
-    identifiers
+    identifiers,
+    notes
   };
-  
+
+  // Add fingerprint data if available
+  if (fingerprintData) {
+    entry.cookies_hash = fingerprintData.cookies_hash;
+    entry.canvas_fingerprint = fingerprintData.canvas_fingerprint;
+    entry.webgl_fingerprint = fingerprintData.webgl_fingerprint;
+    entry.fonts_fingerprint = fingerprintData.fonts_fingerprint;
+  }
+
+  // Store under each identifier for quick lookup
   for (const identifier of identifiers) {
     await kv.set(["blacklist", "identifiers", identifier], entry);
   }
-  
+
+  // Also store main entry for management
   await kv.set(["blacklist", "entries", discordId], entry);
   
+  // Log the blacklist action
+  await kv.set(["blacklist", "logs", now], {
+    action: 'ADD',
+    target: discordId,
+    by: createdBy,
+    reason,
+    severity,
+    duration: durationText,
+    identifiers_count: identifiers.length,
+    linked_sessions: sessionCount
+  });
+
   return { 
     success: true, 
     identifiers,
-    linked_sessions: sessionCount
+    linked_sessions: sessionCount,
+    duration: durationText
   };
 }
 
@@ -940,7 +1036,7 @@ async function cleanupExpired(kv: Deno.Kv) {
   let cleaned = 0;
 
   try {
-    // Clean up expired tokens
+    // Clean up expired tokens (24 hours)
     const tokenEntries = kv.list({ prefix: ["token"] });
     for await (const entry of tokenEntries) {
       if (entry.value && entry.value.expires_at < now) {
@@ -949,7 +1045,7 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
-    // Clean up expired unactivated keys
+    // Clean up expired unactivated keys (24 hours)
     const keyEntries = kv.list({ prefix: ["keys"] });
     for await (const entry of keyEntries) {
       const keyData = entry.value;
@@ -959,7 +1055,49 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
+    // Clean up old sessions (7 days)
+    const sessionEntries = kv.list({ prefix: ["sessions"] });
+    for await (const entry of sessionEntries) {
+      const session = entry.value as UserSession;
+      if (session && now - session.last_active > DATA_RETENTION.SESSIONS) {
+        await kv.delete(entry.key);
+        cleaned++;
+      }
+    }
+
+    // Clean up old error logs (30 days)
+    const errorEntries = [];
+    for await (const entry of kv.list({ prefix: ["errors"] })) {
+      const errorLog = entry.value as any;
+      if (errorLog && now - errorLog.timestamp > DATA_RETENTION.ERROR_LOGS) {
+        errorEntries.push(entry);
+      }
+    }
+    
+    for (const entry of errorEntries) {
+      await kv.delete(entry.key);
+      cleaned++;
+    }
+
     // Clean up expired blacklist entries
+    await cleanupExpiredBlacklistEntries(kv);
+
+    if (cleaned > 0) {
+      metrics.expiredCleanups += cleaned;
+      metrics.lastCleanup = now;
+      console.log(`Cleaned up ${cleaned} expired entries`);
+    }
+  } catch (error) {
+    console.error("Cleanup error:", error);
+  }
+}
+
+async function cleanupExpiredBlacklistEntries(kv: Deno.Kv): Promise<number> {
+  const now = Date.now();
+  let cleaned = 0;
+
+  try {
+    // Clean up expired blacklist identifier entries
     const blacklistEntries = kv.list({ prefix: ["blacklist", "identifiers"] });
     for await (const entry of blacklistEntries) {
       const blacklistEntry = entry.value as BlacklistEntry;
@@ -969,27 +1107,34 @@ async function cleanupExpired(kv: Deno.Kv) {
       }
     }
 
-    // Clean up old error logs
-    const errorEntries = [];
-    for await (const entry of kv.list({ prefix: ["errors"] })) {
-      errorEntries.push(entry);
-    }
-    
-    if (errorEntries.length > 1000) {
-      const toDelete = errorEntries.sort((a, b) => a.key[1] - b.key[1]).slice(0, errorEntries.length - 1000);
-      for (const entry of toDelete) {
+    // Clean up expired main blacklist entries
+    const mainBlacklistEntries = kv.list({ prefix: ["blacklist", "entries"] });
+    for await (const entry of mainBlacklistEntries) {
+      const blacklistEntry = entry.value as BlacklistEntry;
+      if (blacklistEntry && blacklistEntry.expires_at && blacklistEntry.expires_at < now) {
         await kv.delete(entry.key);
         cleaned++;
       }
     }
 
-    if (cleaned > 0) {
-      metrics.expiredCleanups += cleaned;
-      metrics.lastCleanup = now;
-      console.log(`Cleaned up ${cleaned} expired entries`);
+    // Clean up old blacklist logs (keep 90 days)
+    const blacklistLogs = [];
+    for await (const entry of kv.list({ prefix: ["blacklist", "logs"] })) {
+      const log = entry.value as any;
+      if (log && now - entry.key[2] > 90 * 24 * 60 * 60 * 1000) {
+        blacklistLogs.push(entry);
+      }
     }
+    
+    for (const entry of blacklistLogs) {
+      await kv.delete(entry.key);
+      cleaned++;
+    }
+
+    return cleaned;
   } catch (error) {
-    console.error("Cleanup error:", error);
+    console.error("Blacklist cleanup error:", error);
+    return 0;
   }
 }
 
@@ -1026,43 +1171,70 @@ function monitorPerformance() {
 }
 
 // Enhanced WorkInk endpoint
+// Enhanced WorkInk endpoint with comprehensive blacklist checking and fingerprinting
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
+  // Check blacklist for IP and User Agent first
   const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
   if (blacklistCheck.blacklisted) {
     await logError(kv, `Blacklisted connection attempted key generation: ${clientIP}`, req, '/workink');
     return jsonResponse({ 
       error: "Access denied. Your connection is blacklisted.",
-      reason: blacklistCheck.entry?.reason, matched_identifier: blacklistCheck.matchedIdentifier
+      reason: blacklistCheck.entry?.reason,
+      severity: blacklistCheck.severity,
+      expires: blacklistCheck.entry?.expires_at ? new Date(blacklistCheck.entry.expires_at).toISOString() : 'Permanent',
+      matched_identifier: blacklistCheck.matchedIdentifier
     }, 403);
   }
   
   const session = await getUserSession(kv, clientIP, userAgent);
   
+  // Check if user has agreed to privacy policy and age verification
   let body;
-  try { body = await req.json(); } catch (error) {
+  try {
+    body = await req.json();
+  } catch (error) {
     return jsonResponse({ error: "Invalid JSON in request body" }, 400);
   }
 
-  const { privacy_agreed, age_verified } = body;
+  const { privacy_agreed, age_verified, fingerprint_data } = body;
   
   if (!privacy_agreed || !age_verified) {
-    return jsonResponse({ error: "You must agree to the privacy policy and age verification to generate a key." }, 403);
+    return jsonResponse({ 
+      error: "You must agree to the privacy policy and age verification to generate a key." 
+    }, 403);
   }
   
+  // Update session with privacy agreement and store fingerprint if provided
   await updateUserSession(kv, clientIP, userAgent, undefined, undefined, true, true);
   
+  // If fingerprint data is provided, store it with the session
+  if (fingerprint_data) {
+    const sessionId = `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
+    await kv.set(["fingerprints", sessionId], {
+      ...fingerprint_data,
+      collected_at: Date.now(),
+      user_agent: userAgent,
+      ip: clientIP
+    });
+  }
+  
+  // If session has previous keys, check if any were activated by blacklisted users
   if (session.keys_generated.length > 0) {
     for (const key of session.keys_generated) {
       const keyEntry = await kv.get(["keys", key]);
       if (keyEntry.value && keyEntry.value.activated) {
         const discordId = keyEntry.value.activation_data?.discord_id;
         if (discordId) {
+          // Check if this Discord ID is blacklisted
           const userBlacklistCheck = await isBlacklisted(kv, discordId, 'unknown', 'unknown');
           if (userBlacklistCheck.blacklisted) {
             await logError(kv, `Session with blacklisted user attempted key generation: ${discordId}`, req, '/workink');
             return jsonResponse({ 
               error: "Access denied. Your session is linked to a blacklisted account.",
-              reason: userBlacklistCheck.entry?.reason, linked_user: discordId
+              reason: userBlacklistCheck.entry?.reason,
+              severity: userBlacklistCheck.severity,
+              linked_user: discordId,
+              expires: userBlacklistCheck.entry?.expires_at ? new Date(userBlacklistCheck.entry.expires_at).toISOString() : 'Permanent'
             }, 403);
           }
         }
@@ -1070,12 +1242,14 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
     }
   }
   
+  // Check if user already has a valid key
   if (session.current_key) {
     const keyEntry = await kv.get(["keys", session.current_key]);
     if (keyEntry.value && keyEntry.value.expires_at > Date.now()) {
       return jsonResponse({ 
         error: "You already have an active key. Please wait until it expires to generate a new one.",
-        current_key: session.current_key, expires_at: keyEntry.value.expires_at
+        current_key: session.current_key,
+        expires_at: keyEntry.value.expires_at
       }, 409);
     }
   }
@@ -1084,18 +1258,32 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
   const expiresAt = Date.now() + KEY_EXPIRY_MS;
   
   const keyData = {
-    key, created_at: Date.now(), expires_at: expiresAt, activated: false, workink_completed: true,
-    workink_data: { ip: clientIP, user_agent: userAgent, completed_at: Date.now(),
+    key,
+    created_at: Date.now(),
+    expires_at: expiresAt,
+    activated: false,
+    workink_completed: true,
+    workink_data: {
+      ip: clientIP,
+      user_agent: userAgent,
+      completed_at: Date.now(),
       session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
-      privacy_agreed: true, age_verified: true }
+      privacy_agreed: true,
+      age_verified: true,
+      fingerprint_collected: !!fingerprint_data
+    }
   };
   
   await kv.set(["keys", key], keyData);
   await updateUserSession(kv, clientIP, userAgent, key);
   
   return jsonResponse({
-    success: true, key: key, expires_at: new Date(expiresAt).toISOString(),
-    existing_session: session.keys_generated.length > 0, message: "Verification completed successfully"
+    success: true,
+    key: key,
+    expires_at: new Date(expiresAt).toISOString(),
+    existing_session: session.keys_generated.length > 0,
+    fingerprint_collected: !!fingerprint_data,
+    message: "Verification completed successfully"
   });
 }
 
@@ -1178,6 +1366,7 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
 }
 
 // Admin endpoints for blacklist management
+// Enhanced admin blacklist management with severity and duration support
 async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
   const apiKey = req.headers.get('X-Admin-Api-Key');
   if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
@@ -1186,18 +1375,54 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
 
   if (req.method === 'POST') {
     let body;
-    try { body = await req.json(); } catch (error) {
+    try {
+      body = await req.json();
+    } catch (error) {
       return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
     }
 
-    const { discord_id, reason, created_by, duration_ms, user_data } = body;
+    const { discord_id, reason, created_by, severity, duration_ms, user_data, notes } = body;
+    
     if (!discord_id || !reason || !created_by) {
-      return jsonResponse({ error: 'Missing required fields: discord_id, reason, created_by' }, 400);
+      return jsonResponse({ 
+        error: 'Missing required fields: discord_id, reason, created_by' 
+      }, 400);
+    }
+
+    // Validate severity
+    const validSeverities = ['LOW', 'MEDIUM', 'HIGH', 'PERMANENT'];
+    if (severity && !validSeverities.includes(severity)) {
+      return jsonResponse({ 
+        error: 'Invalid severity. Must be one of: LOW, MEDIUM, HIGH, PERMANENT' 
+      }, 400);
     }
 
     try {
-      const result = await addToBlacklist(kv, discord_id, user_data?.ip || 'unknown', 
-        user_data?.user_agent || 'unknown', reason, created_by, duration_ms, user_data);
+      const result = await addToBlacklist(
+        kv, 
+        discord_id, 
+        user_data?.ip || 'unknown', 
+        user_data?.user_agent || 'unknown',
+        reason, 
+        created_by, 
+        severity || 'MEDIUM',
+        duration_ms,
+        user_data,
+        user_data?.fingerprint_data,
+        notes
+      );
+
+      // Log the admin action
+      await kv.set(["admin_actions", Date.now()], {
+        action: 'BLACKLIST_ADD',
+        admin: created_by,
+        target: discord_id,
+        reason: reason,
+        severity: severity || 'MEDIUM',
+        duration_ms: duration_ms,
+        timestamp: Date.now()
+      });
+
       return jsonResponse(result);
     } catch (error) {
       console.error('Blacklist creation error:', error);
@@ -1207,9 +1432,22 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
 
   if (req.method === 'DELETE') {
     const discordId = url.searchParams.get('discord_id');
-    if (!discordId) return jsonResponse({ error: 'discord_id parameter required' }, 400);
+    if (!discordId) {
+      return jsonResponse({ error: 'discord_id parameter required' }, 400);
+    }
+
     try {
       const result = await removeFromBlacklist(kv, discordId);
+      
+      // Log the admin action
+      const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+      await kv.set(["admin_actions", Date.now()], {
+        action: 'BLACKLIST_REMOVE',
+        admin: adminUser,
+        target: discordId,
+        timestamp: Date.now()
+      });
+
       return jsonResponse(result);
     } catch (error) {
       console.error('Blacklist removal error:', error);
@@ -1222,14 +1460,134 @@ async function handleAdminBlacklist(kv: Deno.Kv, req: Request) {
       if (url.searchParams.get('discord_id')) {
         const discordId = url.searchParams.get('discord_id')!;
         const entry = await getBlacklistEntry(kv, discordId);
-        return jsonResponse({ entry });
+        
+        if (entry) {
+          // Get additional info about the user
+          const userKeys = [];
+          for await (const keyEntry of kv.list({ prefix: ["keys"] })) {
+            const keyData = keyEntry.value;
+            if (keyData.activated && keyData.activation_data?.discord_id === discordId) {
+              userKeys.push({
+                key: keyData.key,
+                activated_at: keyData.activation_data.activated_at,
+                ip: keyData.activation_data.ip
+              });
+            }
+          }
+          
+          // Get linked sessions
+          const linkedSessions = await findUserSessions(kv, discordId);
+          
+          return jsonResponse({ 
+            entry,
+            user_info: {
+              total_activations: userKeys.length,
+              activated_keys: userKeys,
+              linked_sessions: linkedSessions.length,
+              sessions: linkedSessions.map(s => ({
+                ip: s.ip,
+                last_active: s.last_active,
+                keys_generated: s.keys_generated.length
+              }))
+            }
+          });
+        } else {
+          return jsonResponse({ entry: null });
+        }
       } else {
+        // Get all blacklist entries with pagination
+        const page = parseInt(url.searchParams.get('page') || '1');
+        const limit = parseInt(url.searchParams.get('limit') || '50');
+        const skip = (page - 1) * limit;
+        
         const entries = await getBlacklistEntries(kv);
-        return jsonResponse({ entries });
+        const total = entries.length;
+        const paginatedEntries = entries.slice(skip, skip + limit);
+        
+        // Get statistics
+        const stats = {
+          total: total,
+          permanent: entries.filter(e => e.severity === 'PERMANENT').length,
+          high: entries.filter(e => e.severity === 'HIGH').length,
+          medium: entries.filter(e => e.severity === 'MEDIUM').length,
+          low: entries.filter(e => e.severity === 'LOW').length,
+          expired: entries.filter(e => e.expires_at && e.expires_at < Date.now()).length
+        };
+
+        return jsonResponse({ 
+          entries: paginatedEntries,
+          pagination: {
+            page,
+            limit,
+            total,
+            pages: Math.ceil(total / limit)
+          },
+          statistics: stats
+        });
       }
     } catch (error) {
       console.error('Blacklist query error:', error);
       return jsonResponse({ error: 'Failed to query blacklist' }, 500);
+    }
+  }
+
+  if (req.method === 'PUT') {
+    // Update blacklist entry
+    let body;
+    try {
+      body = await req.json();
+    } catch (error) {
+      return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
+    }
+
+    const { discord_id, reason, severity, duration_ms, notes } = body;
+    
+    if (!discord_id) {
+      return jsonResponse({ error: 'discord_id required' }, 400);
+    }
+
+    try {
+      const existingEntry = await getBlacklistEntry(kv, discord_id);
+      if (!existingEntry) {
+        return jsonResponse({ error: 'Blacklist entry not found' }, 404);
+      }
+
+      // Update the entry
+      if (reason) existingEntry.reason = reason;
+      if (severity) existingEntry.severity = severity;
+      if (notes !== undefined) existingEntry.notes = notes;
+      
+      // Update expiration if duration is provided
+      if (duration_ms) {
+        existingEntry.expires_at = Date.now() + duration_ms;
+      }
+
+      // Save updated entry to all identifiers
+      for (const identifier of existingEntry.identifiers) {
+        await kv.set(["blacklist", "identifiers", identifier], existingEntry);
+      }
+      
+      // Update main entry
+      await kv.set(["blacklist", "entries", discord_id], existingEntry);
+
+      // Log the update
+      const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+      await kv.set(["admin_actions", Date.now()], {
+        action: 'BLACKLIST_UPDATE',
+        admin: adminUser,
+        target: discord_id,
+        updates: { reason, severity, duration_ms, notes },
+        timestamp: Date.now()
+      });
+
+      return jsonResponse({ 
+        success: true, 
+        message: 'Blacklist entry updated successfully',
+        entry: existingEntry 
+      });
+    } catch (error) {
+      console.error('Blacklist update error:', error);
+      return jsonResponse({ error: 'Failed to update blacklist entry' }, 500);
     }
   }
 
@@ -1415,6 +1773,18 @@ export async function handler(req: Request): Promise<Response> {
           token_expires_at: new Date(tokenExpiresAt).toISOString(),
           activation_data: keyData.activation_data, message: 'Key activated successfully'
         });
+      }
+
+      if (url.pathname === '/check-all-keys' && req.method === 'GET') {
+      const apiKey = req.headers.get('X-Admin-Api-Key');
+      if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+      const keys = [];
+      for await (const entry of kv.list({ prefix: ["keys"] })) {
+        keys.push(entry.value);
+      }
+
+      return jsonResponse({ success: true, keys: keys });
       }
 
       // Check key status
