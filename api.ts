@@ -350,6 +350,391 @@ function parseDuration(durationStr: string): number | null {
   return totalMs > 0 ? totalMs : null;
 }
 
+// ==================== KEY MANAGEMENT ENDPOINTS ====================
+
+// Revoke/delete a key
+async function handleRevokeKey(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(req.url);
+  const key = url.searchParams.get('key');
+  
+  if (!key) return jsonResponse({ error: 'key parameter required' }, 400);
+  if (!isValidKeyFormat(key)) return jsonResponse({ error: 'Invalid key format' }, 400);
+
+  try {
+    const keyEntry = await kv.get(['keys', key]);
+    if (!keyEntry.value) {
+      return jsonResponse({ error: 'Key not found' }, 404);
+    }
+
+    const keyData = keyEntry.value;
+    
+    // Delete associated token if exists
+    if (keyData.script_token) {
+      await kv.delete(['token', keyData.script_token]);
+    }
+    
+    // Delete the key
+    await kv.delete(['keys', key]);
+    
+    // Log the action
+    const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+    await kv.set(["admin_actions", Date.now()], {
+      action: 'KEY_REVOKE',
+      admin: adminUser,
+      key: key,
+      discord_id: keyData.activation_data?.discord_id,
+      timestamp: Date.now()
+    });
+
+    return jsonResponse({
+      success: true,
+      message: `Key ${key} revoked successfully`,
+      key_data: keyData
+    });
+  } catch (error) {
+    console.error('Key revocation error:', error);
+    await logError(kv, `Key revocation error: ${error.message}`, req, '/revoke-key');
+    return jsonResponse({ error: 'Failed to revoke key' }, 500);
+  }
+}
+
+// Bulk key operations
+async function handleBulkKeyOps(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
+  }
+
+  const { action, keys } = body;
+  
+  if (!action || !keys || !Array.isArray(keys)) {
+    return jsonResponse({ error: 'action and keys array required' }, 400);
+  }
+
+  if (keys.length > 50) {
+    return jsonResponse({ error: 'Maximum 50 keys per bulk operation' }, 400);
+  }
+
+  const results = [];
+  const errors = [];
+
+  for (const key of keys) {
+    if (!isValidKeyFormat(key)) {
+      errors.push({ key, error: 'Invalid key format' });
+      continue;
+    }
+
+    try {
+      const keyEntry = await kv.get(['keys', key]);
+      if (!keyEntry.value) {
+        errors.push({ key, error: 'Key not found' });
+        continue;
+      }
+
+      if (action === 'revoke') {
+        const keyData = keyEntry.value;
+        
+        // Delete associated token
+        if (keyData.script_token) {
+          await kv.delete(['token', keyData.script_token]);
+        }
+        
+        // Delete the key
+        await kv.delete(['keys', key]);
+        
+        results.push({
+          key,
+          success: true,
+          action: 'revoked'
+        });
+      } else if (action === 'extend') {
+        // Extend key expiration
+        const keyData = keyEntry.value;
+        const newExpiresAt = Date.now() + KEY_EXPIRY_MS;
+        keyData.expires_at = newExpiresAt;
+        keyData.extended_at = Date.now();
+        keyData.extended_by = req.headers.get('X-Admin-User') || 'Unknown';
+        
+        await kv.set(['keys', key], keyData);
+        
+        results.push({
+          key,
+          success: true,
+          action: 'extended',
+          new_expires_at: newExpiresAt
+        });
+      } else {
+        errors.push({ key, error: 'Invalid action' });
+      }
+    } catch (error) {
+      errors.push({ key, error: error.message });
+    }
+  }
+
+  // Log bulk action
+  const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+  await kv.set(["admin_actions", `bulk_keys_${Date.now()}`], {
+    action: `BULK_KEY_${action.toUpperCase()}`,
+    admin: adminUser,
+    keys_processed: results.length,
+    keys_failed: errors.length,
+    timestamp: Date.now()
+  });
+
+  return jsonResponse({
+    success: true,
+    summary: {
+      total: keys.length,
+      successful: results.length,
+      failed: errors.length
+    },
+    results,
+    errors
+  });
+}
+
+// ==================== SESSION MANAGEMENT ENDPOINTS ====================
+
+// Get all sessions for a user
+async function handleUserSessions(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(req.url);
+  const discordId = url.searchParams.get('user_id');
+  
+  if (!discordId) return jsonResponse({ error: 'user_id parameter required' }, 400);
+
+  try {
+    const sessions = await findUserSessions(kv, discordId);
+    
+    return jsonResponse({
+      success: true,
+      user_id: discordId,
+      sessions: sessions.map(session => ({
+        ip: session.ip,
+        user_agent: session.user_agent,
+        last_active: session.last_active,
+        current_key: session.current_key,
+        keys_generated_count: session.keys_generated.length,
+        privacy_agreed: session.privacy_agreed,
+        age_verified: session.age_verified
+      })),
+      total_sessions: sessions.length
+    });
+  } catch (error) {
+    console.error('User sessions error:', error);
+    await logError(kv, `User sessions error: ${error.message}`, req, '/user-sessions');
+    return jsonResponse({ error: 'Failed to get user sessions' }, 500);
+  }
+}
+
+// Clear user sessions
+async function handleClearSessions(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(req.url);
+  const discordId = url.searchParams.get('user_id');
+  
+  if (!discordId) return jsonResponse({ error: 'user_id parameter required' }, 400);
+
+  try {
+    const sessions = await findUserSessions(kv, discordId);
+    let cleared = 0;
+
+    for (const session of sessions) {
+      const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
+      await kv.delete(['sessions', sessionId]);
+      cleared++;
+    }
+
+    // Log the action
+    const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+    await kv.set(["admin_actions", Date.now()], {
+      action: 'CLEAR_SESSIONS',
+      admin: adminUser,
+      target: discordId,
+      sessions_cleared: cleared,
+      timestamp: Date.now()
+    });
+
+    return jsonResponse({
+      success: true,
+      message: `Cleared ${cleared} sessions for user ${discordId}`,
+      sessions_cleared: cleared
+    });
+  } catch (error) {
+    console.error('Clear sessions error:', error);
+    await logError(kv, `Clear sessions error: ${error.message}`, req, '/clear-sessions');
+    return jsonResponse({ error: 'Failed to clear sessions' }, 500);
+  }
+}
+
+// ==================== SYSTEM MAINTENANCE ENDPOINTS ====================
+
+// Force cleanup of expired entries
+async function handleForceCleanup(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    const beforeCount = metrics.expiredCleanups;
+    await cleanupExpired(kv);
+    const cleaned = metrics.expiredCleanups - beforeCount;
+
+    return jsonResponse({
+      success: true,
+      message: `Cleanup completed. Removed ${cleaned} expired entries.`,
+      cleaned_entries: cleaned
+    });
+  } catch (error) {
+    console.error('Force cleanup error:', error);
+    await logError(kv, `Force cleanup error: ${error.message}`, req, '/force-cleanup');
+    return jsonResponse({ error: 'Failed to perform cleanup' }, 500);
+  }
+}
+
+// Create backup
+async function handleCreateBackup(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    await backupKeys(kv);
+    
+    const backupEntry = await kv.get(["backup", "latest"]);
+    
+    return jsonResponse({
+      success: true,
+      message: 'Backup created successfully',
+      backup: backupEntry.value
+    });
+  } catch (error) {
+    console.error('Backup creation error:', error);
+    await logError(kv, `Backup creation error: ${error.message}`, req, '/create-backup');
+    return jsonResponse({ error: 'Failed to create backup' }, 500);
+  }
+}
+
+// Get system status
+async function handleSystemStatus(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  try {
+    // Count various entities
+    let keysCount = 0;
+    let tokensCount = 0;
+    let sessionsCount = 0;
+    let blacklistCount = 0;
+
+    for await (const entry of kv.list({ prefix: ["keys"] })) keysCount++;
+    for await (const entry of kv.list({ prefix: ["token"] })) tokensCount++;
+    for await (const entry of kv.list({ prefix: ["sessions"] })) sessionsCount++;
+    for await (const entry of kv.list({ prefix: ["blacklist", "entries"] })) blacklistCount++;
+
+    const memoryUsage = Deno.memoryUsage();
+    
+    return jsonResponse({
+      success: true,
+      status: 'online',
+      timestamp: new Date().toISOString(),
+      database_stats: {
+        keys: keysCount,
+        tokens: tokensCount,
+        sessions: sessionsCount,
+        blacklist_entries: blacklistCount
+      },
+      system_metrics: {
+        ...metrics,
+        memory_usage: {
+          heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + "MB",
+          heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + "MB",
+          external: Math.round(memoryUsage.external / 1024 / 1024) + "MB"
+        },
+        rate_limit_entries: rateLimit.size
+      },
+      uptime: {
+        last_cleanup: new Date(metrics.lastCleanup).toISOString(),
+        total_requests: metrics.totalRequests
+      }
+    });
+  } catch (error) {
+    console.error('System status error:', error);
+    await logError(kv, `System status error: ${error.message}`, req, '/system-status');
+    return jsonResponse({ error: 'Failed to get system status' }, 500);
+  }
+}
+
+// ==================== RATE LIMIT MANAGEMENT ====================
+
+// Get rate limit status
+async function handleRateLimitStatus(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(req.url);
+  const ip = url.searchParams.get('ip');
+
+  if (ip) {
+    const userLimit = rateLimit.get(ip);
+    return jsonResponse({
+      ip,
+      rate_limit: userLimit ? {
+        requests: userLimit.count,
+        reset_time: new Date(userLimit.resetTime).toISOString(),
+        workink_requests: userLimit.workinkCount,
+        workink_reset: new Date(userLimit.workinkReset).toISOString()
+      } : null
+    });
+  }
+
+  // Return all rate limits
+  const allLimits = Array.from(rateLimit.entries()).slice(0, 100).map(([ip, data]) => ({
+    ip,
+    requests: data.count,
+    reset_time: new Date(data.resetTime).toISOString(),
+    workink_requests: data.workinkCount,
+    workink_reset: new Date(data.workinkReset).toISOString()
+  }));
+
+  return jsonResponse({
+    total_tracked_ips: rateLimit.size,
+    rate_limits: allLimits,
+    configuration: RATE_LIMIT
+  });
+}
+
+// Clear rate limit for IP
+async function handleClearRateLimit(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const url = new URL(req.url);
+  const ip = url.searchParams.get('ip');
+
+  if (!ip) return jsonResponse({ error: 'ip parameter required' }, 400);
+
+  const deleted = rateLimit.delete(ip);
+
+  return jsonResponse({
+    success: true,
+    message: deleted ? `Rate limit cleared for IP ${ip}` : `No rate limit found for IP ${ip}`,
+    ip,
+    cleared: deleted
+  });
+}
+
+
 // ==================== IDENTIFIER MANAGEMENT ====================
 
 function getAllIdentifiers(discordId: string, ip: string, userAgent: string, keyData?: any, fingerprintData?: any): string[] {
@@ -2651,6 +3036,61 @@ export async function handler(req: Request): Promise<Response> {
           await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
           return jsonResponse({ error: "Internal server error during validation" }, 500);
         }
+      }
+
+      if (url.pathname === '/whitelist' && req.method === 'GET') {
+        return await handleWhitelist(kv, req);
+      }
+
+      if (url.pathname === '/check-blacklist' && req.method === 'GET') {
+        return await handleCheckBlacklist(kv, req);
+      }
+
+      if (url.pathname === '/bulk-whitelist' && req.method === 'POST') {
+        return await handleBulkWhitelist(kv, req);
+      }
+
+      if (url.pathname === '/blacklist-stats' && req.method === 'GET') {
+        return await handleBlacklistStats(kv, req);
+      }
+
+      if (url.pathname === '/revoke-key' && req.method === 'DELETE') {
+        return await handleRevokeKey(kv, req);
+      }
+
+      if (url.pathname === '/bulk-key-ops' && req.method === 'POST') {
+        return await handleBulkKeyOps(kv, req);
+      }
+
+      // Session management endpoints
+      if (url.pathname === '/user-sessions' && req.method === 'GET') {
+        return await handleUserSessions(kv, req);
+      }
+
+      if (url.pathname === '/clear-sessions' && req.method === 'DELETE') {
+        return await handleClearSessions(kv, req);
+      }
+
+      // System maintenance endpoints
+      if (url.pathname === '/force-cleanup' && req.method === 'POST') {
+        return await handleForceCleanup(kv, req);
+      }
+
+      if (url.pathname === '/create-backup' && req.method === 'POST') {
+        return await handleCreateBackup(kv, req);
+      }
+
+      if (url.pathname === '/system-status' && req.method === 'GET') {
+        return await handleSystemStatus(kv, req);
+      }
+
+      // Rate limit management
+      if (url.pathname === '/rate-limit-status' && req.method === 'GET') {
+        return await handleRateLimitStatus(kv, req);
+      }
+
+      if (url.pathname === '/clear-rate-limit' && req.method === 'DELETE') {
+        return await handleClearRateLimit(kv, req);
       }
 
       // Enhanced activation endpoint
