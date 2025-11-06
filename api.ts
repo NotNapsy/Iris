@@ -851,6 +851,244 @@ async function autoBlacklistForMultiIP(
   };
 }
 
+// ==================== WHITELIST MANAGEMENT ====================
+
+// Remove from blacklist (whitelist) endpoint
+async function handleWhitelist(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const url = new URL(req.url);
+  const discordId = url.searchParams.get('user_id');
+  
+  if (!discordId) {
+    return jsonResponse({ error: 'user_id parameter required' }, 400);
+  }
+
+  if (!isValidDiscordId(discordId)) {
+    return jsonResponse({ error: 'Invalid Discord ID format' }, 400);
+  }
+
+  try {
+    const result = await removeFromBlacklist(kv, discordId);
+    
+    // Log the whitelist action
+    const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+    await kv.set(["admin_actions", Date.now()], {
+      action: 'WHITELIST',
+      admin: adminUser,
+      target: discordId,
+      timestamp: Date.now(),
+      removed_identifiers: result.removed
+    });
+
+    return jsonResponse({
+      success: true,
+      message: `User ${discordId} has been whitelisted successfully`,
+      removed_entries: result.removed
+    });
+  } catch (error) {
+    console.error('Whitelist error:', error);
+    await logError(kv, `Whitelist error: ${error.message}`, req, '/whitelist');
+    return jsonResponse({ error: 'Failed to whitelist user' }, 500);
+  }
+}
+
+// Check if user is blacklisted endpoint
+async function handleCheckBlacklist(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const url = new URL(req.url);
+  const discordId = url.searchParams.get('user_id');
+  
+  if (!discordId) {
+    return jsonResponse({ error: 'user_id parameter required' }, 400);
+  }
+
+  try {
+    const blacklistEntry = await getBlacklistEntry(kv, discordId);
+    
+    if (blacklistEntry) {
+      // Get additional user info
+      const userKeys = [];
+      for await (const entry of kv.list({ prefix: ["keys"] })) {
+        const keyData = entry.value;
+        if (keyData.activation_data?.discord_id === discordId) {
+          userKeys.push({
+            key: keyData.key,
+            activated_at: keyData.activation_data.activated_at,
+            expires_at: keyData.expires_at
+          });
+        }
+      }
+
+      return jsonResponse({
+        blacklisted: true,
+        entry: blacklistEntry,
+        user_info: {
+          total_activations: userKeys.length,
+          activated_keys: userKeys,
+          escalation_level: await getEscalationLevel(kv, discordId)
+        }
+      });
+    } else {
+      return jsonResponse({
+        blacklisted: false,
+        message: `User ${discordId} is not blacklisted`
+      });
+    }
+  } catch (error) {
+    console.error('Check blacklist error:', error);
+    await logError(kv, `Check blacklist error: ${error.message}`, req, '/check-blacklist');
+    return jsonResponse({ error: 'Failed to check blacklist status' }, 500);
+  }
+}
+
+// Bulk whitelist endpoint
+async function handleBulkWhitelist(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    return jsonResponse({ error: 'Invalid JSON in request body' }, 400);
+  }
+
+  const { user_ids, reason } = body;
+  
+  if (!user_ids || !Array.isArray(user_ids)) {
+    return jsonResponse({ error: 'user_ids array required' }, 400);
+  }
+
+  if (user_ids.length > 100) {
+    return jsonResponse({ error: 'Maximum 100 users per bulk operation' }, 400);
+  }
+
+  const results = [];
+  const errors = [];
+
+  for (const discordId of user_ids) {
+    if (!isValidDiscordId(discordId)) {
+      errors.push({ user_id: discordId, error: 'Invalid Discord ID format' });
+      continue;
+    }
+
+    try {
+      const result = await removeFromBlacklist(kv, discordId);
+      results.push({
+        user_id: discordId,
+        success: true,
+        removed_entries: result.removed
+      });
+
+      // Log individual whitelist action
+      const adminUser = req.headers.get('X-Admin-User') || 'Unknown';
+      await kv.set(["admin_actions", `bulk_${Date.now()}_${discordId}`], {
+        action: 'BULK_WHITELIST',
+        admin: adminUser,
+        target: discordId,
+        reason: reason || 'Bulk whitelist operation',
+        timestamp: Date.now()
+      });
+
+    } catch (error) {
+      errors.push({
+        user_id: discordId,
+        error: error.message
+      });
+    }
+  }
+
+  return jsonResponse({
+    success: true,
+    summary: {
+      total: user_ids.length,
+      successful: results.length,
+      failed: errors.length
+    },
+    results: results,
+    errors: errors
+  });
+}
+
+// Get blacklist statistics endpoint
+async function handleBlacklistStats(kv: Deno.Kv, req: Request): Promise<Response> {
+  const apiKey = req.headers.get('X-Admin-Api-Key');
+  if (apiKey !== ADMIN_API_KEY) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  try {
+    const entries = await getBlacklistEntries(kv);
+    const now = Date.now();
+
+    // Calculate statistics
+    const stats = {
+      total: entries.length,
+      permanent: entries.filter(e => e.severity === 'PERMANENT').length,
+      high: entries.filter(e => e.severity === 'HIGH').length,
+      medium: entries.filter(e => e.severity === 'MEDIUM').length,
+      low: entries.filter(e => e.severity === 'LOW').length,
+      expired: entries.filter(e => e.expires_at && e.expires_at < now).length,
+      active: entries.filter(e => !e.expires_at || e.expires_at >= now).length,
+      auto_blacklisted: entries.filter(e => e.created_by === 'AUTO_BLACKLIST_SYSTEM').length,
+      admin_blacklisted: entries.filter(e => e.created_by !== 'AUTO_BLACKLIST_SYSTEM').length
+    };
+
+    // Recent auto-blacklist actions (last 24 hours)
+    const recentAutoBlacklists = [];
+    const twentyFourHoursAgo = now - (24 * 60 * 60 * 1000);
+    
+    for await (const entry of kv.list({ prefix: ["auto_blacklist", "logs"] })) {
+      if (entry.value && entry.value.timestamp > twentyFourHoursAgo) {
+        recentAutoBlacklists.push(entry.value);
+      }
+    }
+
+    // Escalation statistics
+    const escalationStats = {
+      total_users_with_escalation: 0,
+      level_breakdown: {} as Record<number, number>
+    };
+
+    for await (const entry of kv.list({ prefix: ["escalation"] })) {
+      if (entry.value) {
+        escalationStats.total_users_with_escalation++;
+        const level = entry.value.level || 0;
+        escalationStats.level_breakdown[level] = (escalationStats.level_breakdown[level] || 0) + 1;
+      }
+    }
+
+    return jsonResponse({
+      statistics: stats,
+      recent_auto_blacklists: {
+        count: recentAutoBlacklists.length,
+        actions: recentAutoBlacklists.slice(0, 10) // Last 10 actions
+      },
+      escalation: escalationStats,
+      system_metrics: {
+        multiIPDetections: metrics.multiIPDetections,
+        autoBlacklists: metrics.autoBlacklists,
+        escalationBans: metrics.escalationBans
+      }
+    });
+  } catch (error) {
+    console.error('Blacklist stats error:', error);
+    await logError(kv, `Blacklist stats error: ${error.message}`, req, '/blacklist-stats');
+    return jsonResponse({ error: 'Failed to get blacklist statistics' }, 500);
+  }
+}
+
+
 // ==================== TOKEN IP TRACKING ====================
 
 async function trackTokenIPUsage(kv: Deno.Kv, token: string, executorIP: string, tokenData: any, keyData: any): Promise<{
