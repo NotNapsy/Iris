@@ -73,7 +73,139 @@ interface UserSession {
 }
 
 // Lunith Script Content
-const SCRIPT_CONTENT = `print("Lunith Loader Initialized - Enhanced Security")`;
+const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
+
+-- Services
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+
+-- Main script logic
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    LocalPlayer = Players.LocalPlayer
+end
+
+-- Get Executor name using Wave's identifyexecutor
+local function getExecutor()
+    if identifyexecutor then
+        local success, executor = pcall(identifyexecutor)
+        if success and executor then
+            return tostring(executor)
+        end
+    end
+    return "Unknown"
+end
+
+-- Get HWID using Wave's gethwid
+local function getHWID()
+    if gethwid then
+        local success, hwid = pcall(gethwid)
+        if success and hwid then
+            return tostring(hwid)
+        end
+    end
+    return "Unknown"
+end
+
+-- Get running scripts to prevent reverse engineering
+local function checkRunningScripts()
+    if getrunningscripts then
+        local success, scripts = pcall(getrunningscripts)
+        if success and scripts then
+            -- Count how many scripts are running besides this one
+            local otherScripts = 0
+            for _, scriptInstance in pairs(scripts) do
+                if scriptInstance ~= script then
+                    otherScripts = otherScripts + 1
+                end
+            end
+            return otherScripts
+        end
+    end
+    return 0
+end
+
+-- Validate token and send identification data
+local function validateTokenAndIdentify(token)
+    local executor = getExecutor()
+    local hwid = getHWID()
+    local otherScriptsCount = checkRunningScripts()
+    
+    local identificationData = {
+        token = token,
+        executor = executor,
+        hwid = hwid,
+        player_name = LocalPlayer.Name,
+        player_userid = LocalPlayer.UserId,
+        other_scripts_running = otherScriptsCount,
+        timestamp = os.time()
+    }
+    
+    -- Send identification data to server
+    local success, response = pcall(function()
+        return game:HttpPost(
+            "https://api.napsy.dev/validate-token",
+            HttpService:JSONEncode(identificationData),
+            Enum.HttpContentType.ApplicationJson
+        )
+    )
+    
+    if success then
+        local result = HttpService:JSONDecode(response)
+        return result
+    else
+        return {success = false, error = "Validation failed: " .. tostring(response)}
+    end
+end
+
+-- Main execution
+local function main()
+    print("Starting Lunith verification...")
+    
+    -- Extract token from script URL
+    local scriptUrl = script.Parent and script.Parent:GetFullName() or "Unknown"
+    local token = scriptUrl:match("scripts/([^/]+)$") or "unknown"
+    
+    print("Token detected:", token)
+    print("Player:", LocalPlayer.Name, "(", LocalPlayer.UserId, ")")
+    
+    -- Get Executor and HWID
+    local executor = getExecutor()
+    local hwid = getHWID()
+    
+    print("Executor:", executor)
+    print("HWID:", hwid)
+    
+    -- Check for other scripts running
+    local otherScripts = checkRunningScripts()
+    if otherScripts > 0 then
+        print("Warning: " .. otherScripts .. " other scripts detected")
+    end
+    
+    -- Validate token and send identification
+    print("Validating token and sending identification data...")
+    local validationResult = validateTokenAndIdentify(token)
+    
+    if validationResult.success then
+        print("Token validation successful!")
+        print("Executor and HWID have been linked to your key")
+        return "Lunith loaded successfully for " .. LocalPlayer.Name
+    else
+        warn("Token validation failed:", validationResult.error or "Unknown error")
+        return "Lunith validation failed: " .. (validationResult.error or "Unknown error")
+    end
+end
+
+-- Execute main function
+local success, result = pcall(main)
+if success then
+    print(result or "Lunith execution completed")
+else
+    warn("Lunith execution error:", result)
+end
+
+return "Lunith loader process completed"`;
 
 // Parse duration string (1Y, 1W, 1D, 1H, 1M, 1S)
 function parseDuration(durationStr: string): number | null {
@@ -1744,15 +1876,12 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
 
     const { 
       token, 
+      executor, 
       hwid, 
-      hwid_methods, 
-      exploit_info, 
-      system_info, 
-      ip_address, 
       player_name, 
       player_userid, 
-      timestamp,
-      security_checks 
+      other_scripts_running,
+      timestamp 
     } = body;
     
     if (!token || token === 'unknown') {
@@ -1781,33 +1910,22 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
 
     const keyData = keyEntry.value;
     
-    // Update key with enhanced activation data
+    // Update key with executor and HWID data
     if (!keyData.activation_data) {
       keyData.activation_data = {
         discord_id: tokenData.user_id,
         discord_username: tokenData.username,
         activated_at: Date.now(),
-        ip: ip_address,
+        executor: executor,
         hwid: hwid,
-        hwid_methods: hwid_methods,
-        exploit_info: exploit_info,
-        system_os: system_info?.platform || 'unknown',
-        roblox_version: system_info?.roblox_version || 'unknown',
         player_name: player_name,
         player_userid: player_userid,
-        is_studio: system_info?.is_studio || false,
-        game_id: system_info?.game_id || 'unknown',
-        place_id: system_info?.place_id || 'unknown',
-        security_checks: security_checks,
         first_validation: Date.now()
       };
     } else {
-      // Update existing activation with exploit info
+      // Update existing activation with executor and HWID
+      keyData.activation_data.executor = executor || keyData.activation_data.executor;
       keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
-      keyData.activation_data.hwid_methods = hwid_methods || keyData.activation_data.hwid_methods;
-      keyData.activation_data.exploit_info = exploit_info || keyData.activation_data.exploit_info;
-      keyData.activation_data.system_os = system_info?.platform || keyData.activation_data.system_os;
-      keyData.activation_data.roblox_version = system_info?.roblox_version || keyData.activation_data.roblox_version;
       keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
       keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
       keyData.activation_data.last_validation = Date.now();
@@ -1816,69 +1934,47 @@ if (url.pathname === '/validate-token' && req.method === 'POST') {
     
     await kv.set(["keys", tokenData.key], keyData);
 
-    // Enhanced blacklist checking with exploit parameters
     const blacklistCheck = await isBlacklisted(
       kv, 
       tokenData.user_id, 
-      ip_address, 
-      `Roblox/${system_info?.platform || 'unknown'}`,
+      'unknown', // No IP needed
+      `Executor/${executor}`,
       keyData,
       { 
         hwid: hwid,
-        hwid_methods: hwid_methods,
-        exploit_info: exploit_info,
-        system_platform: system_info?.platform,
-        roblox_version: system_info?.roblox_version,
-        game_id: system_info?.game_id
+        executor: executor
       }
     );
 
     if (blacklistCheck.blacklisted) {
-      // Log the blocked attempt with exploit info
-      await kv.set(["security", "blocked_attempts", Date.now()], {
-        key: tokenData.key,
-        token: token,
-        discord_id: tokenData.user_id,
-        ip: ip_address,
-        hwid: hwid,
-        exploit: exploit_info,
-        reason: blacklistCheck.entry?.reason,
-        severity: blacklistCheck.severity,
-        timestamp: Date.now()
-      });
-      
       return jsonResponse({ 
         success: false, 
         error: "Access denied. Your account or device is blacklisted.",
         reason: blacklistCheck.entry?.reason,
-        severity: blacklistCheck.severity,
-        exploit_detected: exploit_info?.name
+        severity: blacklistCheck.severity
       }, 403);
     }
 
-    // Log successful validation with exploit info
+    // Log successful validation
     await kv.set(["security", "validations", Date.now()], {
       key: tokenData.key,
       token: token,
       discord_id: tokenData.user_id,
-      ip: ip_address,
+      executor: executor,
       hwid: hwid,
-      exploit: exploit_info,
-      system_info: system_info,
+      other_scripts: other_scripts_running,
       timestamp: Date.now()
     });
 
-    // Return success with exploit context
+    // Return success
     return jsonResponse({
       success: true,
       validated: true,
       key: tokenData.key,
       discord_user: tokenData.username,
-      activation_data: keyData.activation_data,
-      script_url: `https://api.napsy.dev/scripts/${token}`,
-      loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
-      exploit_context: exploit_info,
-      message: "Token validated successfully with enhanced security"
+      executor: executor,
+      hwid_linked: true,
+      message: "Token validated successfully - Executor and HWID linked to key"
     });
 
   } catch (error) {
