@@ -1,21 +1,20 @@
-// api.ts - Production Ready Lunith Key System
-const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; 
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
 // Rate limiting configuration
 const RATE_LIMIT = {
   MAX_REQUESTS: 10,
-  WINDOW_MS: 60000, // 1 minute
-  MAX_WORKINK_REQUESTS: 3, // Stricter limit for key generation
-  WORKINK_WINDOW_MS: 300000 // 5 minutes
+  WINDOW_MS: 60000,
+  MAX_WORKINK_REQUESTS: 3,
+  WORKINK_WINDOW_MS: 300000
 };
 
 const AUTO_BLACKLIST_CONFIG = {
-  MULTI_IP_THRESHOLD: 2, // Number of unique IPs allowed per token
-  ESCALATION_BASE_DAYS: 1, // Start with 1 day ban
-  ESCALATION_MULTIPLIER: 2, // Double each time
-  MAX_ESCALATION_DAYS: 365, // Cap at 1 year
+  MULTI_IP_THRESHOLD: 2, // number of unique IPs allowed per token
+  ESCALATION_BASE_DAYS: 1, // start with 1 day ban
+  ESCALATION_MULTIPLIER: 2, // double each time
+  MAX_ESCALATION_DAYS: 365, // cap at 1 year
   BAN_REASON: "Multi-IP token sharing detected",
   SEVERITY: "HIGH" as const
 };
@@ -26,10 +25,10 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
-// Rate limiting storage
+// rate limiting storage
 const rateLimit = new Map<string, { count: number; resetTime: number; workinkCount: number; workinkReset: number }>();
 
-// System metrics
+// system metrics
 let metrics = {
   totalRequests: 0,
   successfulActivations: 0,
@@ -84,7 +83,7 @@ interface UserSession {
   age_verified: boolean;
 }
 
-// Lunith Script Content
+// lunith Script Content
 const SCRIPT_CONTENT_BASE = `print("Lunith Loader Initialized")
 
 -- Services
