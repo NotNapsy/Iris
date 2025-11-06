@@ -96,6 +96,17 @@ local function getExecutor()
     return "Unknown"
 end
 
+-- Get HWID using Wave's gethwid
+local function getHWID()
+    if gethwid then
+        local success, hwid = pcall(gethwid)
+        if success and hwid then
+            return tostring(hwid)
+        end
+    end
+    return "Unknown"
+end
+
 -- Get running scripts to prevent reverse engineering
 local function checkRunningScripts()
     if getrunningscripts then
@@ -114,43 +125,39 @@ local function checkRunningScripts()
     return 0
 end
 
--- Better token extraction - try multiple methods
+-- Extract token from the actual script source URL
 local function extractToken()
-    -- Method 1: Try to get from script source if it's a string-based loader
-    if script and script.Source then
-        local source = script.Source
-        local token = source:match("scripts/([%w%-_]+)")
-        if token then
-            return token
-        end
-    end
-    
-    -- Method 2: Try to get from script parent hierarchy
-    if script and script.Parent then
-        local fullName = script:GetFullName()
-        local token = fullName:match("scripts/([%w%-_]+)")
-        if token then
-            return token
-        end
-    end
-    
-    -- Method 3: If executing via loadstring, check the loadstring content
-    local debugInfo = debug.getinfo(2, "S")
+    -- Method 1: Check if this is being executed via loadstring from a URL
+    local debugInfo = debug.getinfo(1, "S")
     if debugInfo and debugInfo.source then
         local source = debugInfo.source
-        local token = source:match("scripts/([%w%-_]+)")
-        if token then
-            return token
+        print("Debug source:", source)
+        
+        -- Look for token in the source URL
+        if source:find("https://api.napsy.dev/scripts/") then
+            local token = source:match("scripts/([%w%-_]+)")
+            if token then
+                return token
+            end
         end
     end
     
-    return "unknown"
+    -- Method 2: If executing directly, we need to get the token from the user
+    print("⚠️ Running in direct mode - token not found in URL")
+    print("Please use the full loader URL: https://api.napsy.dev/scripts/YOUR_TOKEN")
+    
+    return "direct_execution"
 end
 
--- Validate token and send identification data using Wave's request function
+-- Validate token and send identification data
 local function validateTokenAndIdentify(token)
+    -- If we're in direct execution mode, we can't validate properly
+    if token == "direct_execution" then
+        return {success = false, error = "Please use the full loader URL from your Discord DMs"}
+    end
+    
     local executor = getExecutor()
-    local hwid = gethwid()
+    local hwid = getHWID()
     local otherScriptsCount = checkRunningScripts()
     
     local identificationData = {
@@ -163,46 +170,32 @@ local function validateTokenAndIdentify(token)
         timestamp = tostring(os.time())
     }
     
-    -- Better JSON encoding with proper escaping
-    local function encodeValue(v)
-        if type(v) == "string" then
-            -- Escape quotes and backslashes
-            v = v:gsub('"', '\\"'):gsub('\\', '\\\\')
-            return '"' .. v .. '"'
-        elseif type(v) == "number" then
-            return tostring(v)
-        else
-            return '"' .. tostring(v) .. '"'
-        end
-    end
-    
+    -- Simple JSON encoding
     local jsonParts = {}
     for k, v in pairs(identificationData) do
-        table.insert(jsonParts, '"' .. k .. '":' .. encodeValue(v))
+        if type(v) == "string" then
+            table.insert(jsonParts, '"' .. k .. '":"' .. v .. '"')
+        else
+            table.insert(jsonParts, '"' .. k .. '":' .. tostring(v))
+        end
     end
     local jsonData = "{" .. table.concat(jsonParts, ",") .. "}"
     
-    print("Sending data:", jsonData)
-    
-    -- Send identification data to server using Wave's request function
+    -- Send identification data to server
     if request then
         local success, response = pcall(function()
             return request({
                 Url = "https://api.napsy.dev/validate-token",
                 Method = "POST",
                 Headers = {
-                    ["Content-Type"] = "application/json"
+                    ["Content-Type"] = application/json
                 },
                 Body = jsonData
             })
         end)
         
         if success and response then
-            print("Response Status:", response.StatusCode)
-            print("Response Body:", response.Body)
-            
             if response.Success then
-                -- Parse the JSON response manually
                 local body = response.Body
                 if body:find('"success":true') then
                     return {success = true}
@@ -214,7 +207,7 @@ local function validateTokenAndIdentify(token)
                 return {success = false, error = "HTTP " .. tostring(response.StatusCode)}
             end
         else
-            return {success = false, error = "Request failed: " .. tostring(response)}
+            return {success = false, error = "Request failed"}
         end
     else
         return {success = false, error = "Request function not available"}
@@ -223,55 +216,59 @@ end
 
 -- Main execution
 local function main()
-    print("Starting Lunith verification...")
+    print("🚀 Starting Lunith verification...")
     
-    -- Extract token using improved method
-    local token = extractToken()
-    
-    print("Token detected:", token)
-    print("Player:", LocalPlayer.Name, "(", LocalPlayer.UserId, ")")
-    
-    -- Get Executor and HWID
+    -- Get Executor and HWID first (to verify they work)
     local executor = getExecutor()
-    local hwid = gethwid()
+    local hwid = getHWID()
     
-    print("Executor:", executor)
-    print("HWID:", hwid)
+    print("🔍 Executor:", executor)
+    print("🆔 HWID:", hwid)
+    
+    -- Extract token
+    local token = extractToken()
+    print("🔑 Token:", token)
+    
+    print("👤 Player:", LocalPlayer.Name, "(ID:", LocalPlayer.UserId, ")")
     
     -- Check for other scripts running
     local otherScripts = checkRunningScripts()
     if otherScripts > 0 then
-        print("Warning: " .. otherScripts .. " other scripts detected")
+        print("⚠️ Warning: " .. otherScripts .. " other scripts detected")
     end
     
-    -- If token is still unknown, we can't validate
-    if token == "unknown" then
-        warn("❌ Cannot extract token from script URL")
-        return "Lunith validation failed: Cannot extract token"
-    end
-    
-    -- Validate token and send identification
-    print("Validating token and sending identification data...")
-    local validationResult = validateTokenAndIdentify(token)
-    
-    if validationResult.success then
-        print("Token validation successful!")
-        print("Executor: " .. executor)
-        print("HWID: " .. hwid)
-        print("Both have been linked to your key")
-        return "Lunith loaded successfully for " .. LocalPlayer.Name
+    -- Validate token
+    if token ~= "direct_execution" then
+        print("🔐 Validating token and sending identification data...")
+        local validationResult = validateTokenAndIdentify(token)
+        
+        if validationResult.success then
+            print("✅ Token validation successful!")
+            print("📋 Executor and HWID have been linked to your key")
+            return "🎉 Lunith loaded successfully for " .. LocalPlayer.Name
+        else
+            warn("❌ Token validation failed:", validationResult.error)
+            return "Lunith validation failed: " .. validationResult.error
+        end
     else
-        warn("Token validation failed:", validationResult.error or "Unknown error")
-        return "Lunith validation failed: " .. (validationResult.error or "Unknown error")
+        -- Direct execution mode - just show info
+        print("ℹ️ Running in direct execution mode")
+        print("💡 To activate properly, use the loader URL from your Discord DMs")
+        print("📝 Your identification info:")
+        print("   - Executor: " .. executor)
+        print("   - HWID: " .. hwid)
+        print("   - Player: " .. LocalPlayer.Name)
+        return "Lunith identification complete - Use proper loader URL for full activation"
     end
 end
 
--- Execute main function
+-- Safe execution with error handling
 local success, result = pcall(main)
 if success then
-    print(result or "Lunith execution completed")
+    print(result or "✅ Lunith execution completed")
 else
-    warn("Lunith execution error:", result)
+    warn("💥 Lunith execution error:", result)
+    print("Please contact support if this error persists")
 end
 
 return "Lunith loader process completed"`;
