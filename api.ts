@@ -73,17 +73,485 @@ interface UserSession {
 }
 
 // Lunith Script Content
-const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
+const SCRIPT_CONTENT = `print("Lunith Loader Initialized - Enhanced Security")
+
+-- Services
+local Players = game:GetService("Players")
+local HttpService = game:GetService("HttpService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Stats = game:GetService("Stats")
 
 -- Main script logic
-local Players = game:GetService("Players")
 local LocalPlayer = Players.LocalPlayer
-
-if LocalPlayer then
-    print("Lunith loaded for:", LocalPlayer.Name)
+if not LocalPlayer then
+    Players:GetPropertyChangedSignal("LocalPlayer"):Wait()
+    LocalPlayer = Players.LocalPlayer
 end
 
-return "Lunith loaded successfully"`;
+-- Exploit detection and parameters
+local function getExploitInfo()
+    local exploitInfo = {
+        detected = false,
+        name = "Unknown",
+        version = "Unknown",
+        inject_method = "Unknown",
+        capabilities = {}
+    }
+    
+    -- Check for common exploit identifiers
+    local exploitChecks = {
+        -- Wave Lua checks
+        ["Wave"] = function()
+            return type(wave) ~= "nil" or type(_G.wave) ~= "nil"
+        end,
+        
+        -- Synapse X checks
+        ["Synapse X"] = function()
+            return type(syn) ~= "nil" or type(synapse) ~= "nil"
+        end,
+        
+        -- Script-Ware checks
+        ["Script-Ware"] = function()
+            return type(scriptware) ~= "nil" or type(sw) ~= "nil"
+        end,
+        
+        -- Krnl checks
+        ["Krnl"] = function()
+            return type(krnl) ~= "nil" or type(Krnl) ~= "nil"
+        end,
+        
+        -- Oxygen U checks
+        ["Oxygen U"] = function()
+            return type(oxygen) ~= "nil" or type(getexecutorname) ~= "nil"
+        end,
+        
+        -- Comet checks
+        ["Comet"] = function()
+            return type(comet) ~= "nil"
+        end
+    }
+    
+    -- Perform exploit detection
+    for exploitName, checkFunction in pairs(exploitChecks) do
+        local success, isDetected = pcall(checkFunction)
+        if success and isDetected then
+            exploitInfo.detected = true
+            exploitInfo.name = exploitName
+            break
+        end
+    end
+    
+    -- Get exploit capabilities
+    local capabilityChecks = {
+        {"libraries", function() return type(getloadedmodules) ~= "nil" end},
+        {"hookfunctions", function() return type(hookfunction) ~= "nil" end},
+        {"crypt", function() return type(crypt) ~= "nil" end},
+        {"request", function() return type(request) ~= "nil" end},
+        {"writefile", function() return type(writefile) ~= "nil" end},
+        {"readfile", function() return type(readfile) ~= "nil" end},
+        {"iswindowactive", function() return type(iswindowactive) ~= "nil" end},
+        {"getconnections", function() return type(getconnections) ~= "nil" end},
+        {"getcustomasset", function() return type(getcustomasset) ~= "nil" end},
+        {"saveinstance", function() return type(saveinstance) ~= "nil" end}
+    }
+    
+    for _, check in pairs(capabilityChecks) do
+        local capability, checkFunc = check[1], check[2]
+        local success, hasCapability = pcall(checkFunc)
+        if success and hasCapability then
+            table.insert(exploitInfo.capabilities, capability)
+        end
+    end
+    
+    -- Get executor version if available
+    if exploitInfo.detected then
+        local versionChecks = {
+            function() return tostring(_G.VERSION) end,
+            function() return tostring(identifyexecutor and identifyexecutor()) end,
+            function() return tostring(getexecutorname and getexecutorname()) end,
+            function() return tostring(getexploitversion and getexploitversion()) end
+        }
+        
+        for _, versionCheck in pairs(versionChecks) do
+            local success, version = pcall(versionCheck)
+            if success and version and version ~= "nil" and version ~= "" then
+                exploitInfo.version = version
+                break
+            end
+        end
+    end
+    
+    -- Check injection method
+    if type(getscriptclosure) ~= "nil" then
+        exploitInfo.inject_method = "Script Closure"
+    elseif type(clonefunction) ~= "nil" then
+        exploitInfo.inject_method = "Function Cloning"
+    else
+        exploitInfo.inject_method = "Standard Injection"
+    end
+    
+    return exploitInfo
+end
+
+-- Enhanced HWID with exploit context
+local function getHWID()
+    local exploitInfo = getExploitInfo()
+    local hwidMethods = {}
+    
+    -- Method 1: RbxAnalyticsService (Official)
+    local success, result = pcall(function()
+        return game:GetService("RbxAnalyticsService"):GetClientId()
+    end)
+    if success and result then
+        table.insert(hwidMethods, {source = "RbxAnalytics", id = result})
+    end
+    
+    -- Method 2: Settings (Alternative official)
+    success, result = pcall(function()
+        return settings():GetFVariable("GlobalConfig_ClientId")
+    end)
+    if success and result then
+        table.insert(hwidMethods, {source = "Settings", id = result})
+    end
+    
+    -- Method 3: Exploit-specific HWID (Wave Lua and others)
+    if exploitInfo.detected then
+        local exploitHwidChecks = {
+            function() return type(gethwid) == "function" and gethwid() end,
+            function() return type(get_hwid) == "function" and get_hwid() end,
+            function() return type(hwid) == "function" and hwid() end,
+            function() return type(_G.HWID) ~= "nil" and tostring(_G.HWID) end,
+            function() return type(getexploitid) == "function" and getexploitid() end
+        }
+        
+        for _, hwidCheck in pairs(exploitHwidChecks) do
+            success, result = pcall(hwidCheck)
+            if success and result and result ~= "nil" then
+                table.insert(hwidMethods, {source = exploitInfo.name .. "_HWID", id = tostring(result)})
+                break
+            end
+        end
+    end
+    
+    -- Method 4: Generate composite HWID from system info
+    local systemInfo = {
+        tostring(RunService:GetRobloxVersion()),
+        tostring(UserInputService:GetPlatform()),
+        tostring(exploitInfo.name),
+        tostring(exploitInfo.version),
+        tostring(os.time()),
+        tostring(game.GameId)
+    }
+    
+    local combined = table.concat(systemInfo, "|")
+    local hash = ""
+    for i = 1, 32 do
+        local byte = combined:byte((i % #combined) + 1)
+        hash = hash .. string.format("%02x", byte)
+    end
+    
+    table.insert(hwidMethods, {source = "Composite", id = hash})
+    
+    return hwidMethods, exploitInfo
+end
+
+-- Enhanced system information with exploit context
+local function getSystemInfo()
+    local platform = UserInputService:GetPlatform().Name
+    local isStudio = RunService:IsStudio()
+    local robloxVersion = RunService:GetRobloxVersion()
+    
+    -- Get performance stats
+    local performanceStats = {}
+    local statSuccess, memory = pcall(function()
+        return Stats:GetMemoryUsageMbForTag(Enum.StudioMemoryTag.Plugin)
+    end)
+    if statSuccess then
+        performanceStats.memory_usage_mb = memory
+    end
+    
+    -- Get FPS
+    local fpsSuccess, fps = pcall(function()
+        return 1/RunService.RenderStepped:Wait()
+    end)
+    if fpsSuccess then
+        performanceStats.fps = math.floor(fps)
+    end
+    
+    return {
+        platform = platform,
+        is_studio = isStudio,
+        roblox_version = robloxVersion,
+        game_id = game.GameId,
+        place_id = game.PlaceId,
+        performance = performanceStats,
+        server_type = RunService:IsClient() and "Client" or "Server"
+    }
+end
+
+-- Enhanced IP detection with multiple fallbacks
+local function getIPAddress()
+    local ipServices = {
+        "https://api.ipify.org",
+        "https://ipv4.icanhazip.com",
+        "https://api.my-ip.io/ip",
+        "https://checkip.amazonaws.com"
+    }
+    
+    for _, service in ipairs(ipServices) do
+        local success, result = pcall(function()
+            return game:HttpGet(service, true)
+        end)
+        
+        if success and result and result:match("%d+%.%d+%.%d+%.%d+") then
+            return result:gsub("%s+", "")
+        end
+    end
+    
+    return "unknown"
+end
+
+-- Enhanced validation with exploit parameters
+local function validateTokenAndIdentify(token)
+    local hwidMethods, exploitInfo = getHWID()
+    local primaryHWID = hwidMethods[1] and hwidMethods[1].id or "unknown"
+    
+    local identificationData = {
+        token = token,
+        hwid = primaryHWID,
+        hwid_methods = hwidMethods,
+        exploit_info = exploitInfo,
+        system_info = getSystemInfo(),
+        ip_address = getIPAddress(),
+        player_name = LocalPlayer.Name,
+        player_userid = LocalPlayer.UserId,
+        timestamp = os.time(),
+        security_checks = {
+            -- Anti-tampering checks
+            script_integrity = checkScriptIntegrity(),
+            environment_checks = performEnvironmentChecks(),
+            timing_checks = performTimingChecks()
+        }
+    }
+    
+    -- Send identification data to server
+    local success, response = pcall(function()
+        return game:HttpPost(
+            "https://api.napsy.dev/validate-token",
+            HttpService:JSONEncode(identificationData),
+            Enum.HttpContentType.ApplicationJson
+        )
+    end)
+    
+    if success then
+        local result = HttpService:JSONDecode(response)
+        return result
+    else
+        return {success = false, error = "Validation failed: " .. tostring(response)}
+    end
+end
+
+-- Security checks
+local function checkScriptIntegrity()
+    local checks = {
+        script_loaded = true,
+        no_tampering = true,
+        valid_environment = true
+    }
+    
+    -- Check if script is running in expected environment
+    if RunService:IsStudio() then
+        checks.valid_environment = false
+        checks.environment_reason = "Running in Studio"
+    end
+    
+    -- Simple anti-tampering check
+    local scriptName = tostring(script:GetFullName())
+    if not scriptName:match("Lunith") then
+        checks.no_tampering = false
+        checks.tampering_reason = "Unexpected script name"
+    end
+    
+    return checks
+end
+
+local function performEnvironmentChecks()
+    local checks = {
+        secure_mode = true,
+        no_debuggers = true,
+        memory_clean = true
+    }
+    
+    -- Check for debuggers
+    local debugSuccess, debugResult = pcall(function()
+        return debug and debug.getinfo and true or false
+    end)
+    
+    if debugSuccess and debugResult then
+        checks.no_debuggers = false
+    end
+    
+    return checks
+end
+
+local function performTimingChecks()
+    local startTime = os.clock()
+    
+    -- Perform some calculations to check execution speed
+    local testValue = 0
+    for i = 1, 1000 do
+        testValue = testValue + math.sqrt(i)
+    end
+    
+    local executionTime = os.clock() - startTime
+    
+    return {
+        execution_time = executionTime,
+        within_limits = executionTime < 0.1, -- Should take less than 100ms
+        test_value = testValue
+    }
+end
+
+-- Enhanced script loading with exploit-specific optimizations
+local function loadMainScript(scriptUrl, exploitInfo)
+    local success, scriptContent = pcall(function()
+        return game:HttpGet(scriptUrl, true)
+    end)
+    
+    if success then
+        -- Execute the main script with exploit context
+        local loadedFunction, loadError = loadstring(scriptContent, "Lunith_Main")
+        if loadedFunction then
+            -- Pass exploit info to main script if needed
+            if exploitInfo.detected then
+                _G.LUNITH_EXPLOIT_CONTEXT = exploitInfo
+            end
+            
+            local executeSuccess, executeResult = pcall(loadedFunction)
+            if executeSuccess then
+                print("✅ Lunith loaded successfully with " .. exploitInfo.name)
+                return executeResult
+            else
+                warn("❌ Script execution error:", executeResult)
+                return nil
+            end
+        else
+            warn("❌ Script load error:", loadError)
+            return nil
+        end
+    else
+        warn("❌ Failed to fetch script:", scriptContent)
+        return nil
+    end
+end
+
+-- Wave Lua specific optimizations
+local function setupWaveLuaFeatures(exploitInfo)
+    if exploitInfo.name == "Wave" then
+        print("🌊 Wave Lua detected - Enabling enhanced features")
+        
+        -- Wave-specific optimizations can go here
+        if type(wave) ~= "nil" then
+            -- Use Wave's enhanced functions if available
+            _G.LUNITH_WAVE_MODE = true
+        end
+    end
+end
+
+-- Main execution
+local function main()
+    print("🚀 Starting Lunith Enhanced Loader...")
+    
+    -- Get exploit information first
+    local exploitInfo = getExploitInfo()
+    print("🔍 Exploit Detection:")
+    print("   - Detected:", exploitInfo.detected and "✅ " .. exploitInfo.name or "❌ None")
+    print("   - Version:", exploitInfo.version)
+    print("   - Injection:", exploitInfo.inject_method)
+    print("   - Capabilities:", #exploitInfo.capabilities > 0 and table.concat(exploitInfo.capabilities, ", ") or "Basic")
+    
+    -- Setup exploit-specific features
+    setupWaveLuaFeatures(exploitInfo)
+    
+    -- Extract token from script URL
+    local scriptUrl = script.Parent and script.Parent:GetFullName() or "Unknown"
+    local token = scriptUrl:match("scripts/([^/]+)$") or "unknown"
+    
+    print("🔑 Token detected:", token)
+    print("👤 Player:", LocalPlayer.Name, "(", LocalPlayer.UserId, ")")
+    
+    -- Get and display system info
+    local systemInfo = getSystemInfo()
+    print("💻 System Info:")
+    print("   - Platform:", systemInfo.platform)
+    print("   - Roblox Version:", systemInfo.roblox_version)
+    print("   - Server Type:", systemInfo.server_type)
+    print("   - Game ID:", systemInfo.game_id)
+    
+    -- Get HWID information
+    local hwidMethods, _ = getHWID()
+    print("🆔 HWID Methods Found:", #hwidMethods)
+    for i, method in ipairs(hwidMethods) do
+        print("   " .. i .. ". " .. method.source .. ": " .. method.id:sub(1, 8) .. "...")
+    end
+    
+    -- Validate token and send identification
+    print("🔐 Validating token and sending identification data...")
+    local validationResult = validateTokenAndIdentify(token)
+    
+    if validationResult.success then
+        print("✅ Token validation successful!")
+        
+        if validationResult.script_url then
+            print("📦 Loading main script from:", validationResult.script_url)
+            local loadResult = loadMainScript(validationResult.script_url, exploitInfo)
+            
+            if loadResult then
+                return "🎉 Lunith loaded successfully for " .. LocalPlayer.Name .. " using " .. exploitInfo.name
+            else
+                return "⚠️ Lunith loading completed with warnings"
+            end
+        else
+            print("ℹ️ No script URL provided, loading default functionality")
+            return "✅ Lunith verification completed for " .. LocalPlayer.Name
+        end
+    else
+        warn("❌ Token validation failed:", validationResult.error or "Unknown error")
+        return "🚫 Lunith validation failed: " .. (validationResult.error or "Unknown error")
+    end
+end
+
+-- Enhanced error handling with exploit context
+local function safeExecute()
+    local success, result = pcall(main)
+    if success then
+        print(result or "✅ Lunith execution completed")
+        return result or "Lunith loader process completed"
+    else
+        local errorMsg = "❌ Lunith execution error: " .. tostring(result)
+        warn(errorMsg)
+        
+        -- Try to report error to server
+        pcall(function()
+            game:HttpPost(
+                "https://api.napsy.dev/error-report",
+                HttpService:JSONEncode({
+                    error = tostring(result),
+                    player = LocalPlayer.Name,
+                    userid = LocalPlayer.UserId,
+                    timestamp = os.time()
+                }),
+                Enum.HttpContentType.ApplicationJson
+            )
+        end)
+        
+        return errorMsg
+    end
+end
+
+-- Execute with enhanced security
+return safeExecute()`;
 
 // Parse duration string (1Y, 1W, 1D, 1H, 1M, 1S)
 function parseDuration(durationStr: string): number | null {
@@ -1742,6 +2210,161 @@ if (url.pathname === '/generate-keys' && req.method === 'POST') {
   }
 }
 
+      // Enhanced validation endpoint in api.ts
+if (url.pathname === '/validate-token' && req.method === 'POST') {
+  try {
+    let body;
+    try {
+      body = await req.json();
+    } catch (error) {
+      return jsonResponse({ error: "Invalid JSON in request body" }, 400);
+    }
+
+    const { 
+      token, 
+      hwid, 
+      hwid_methods, 
+      exploit_info, 
+      system_info, 
+      ip_address, 
+      player_name, 
+      player_userid, 
+      timestamp,
+      security_checks 
+    } = body;
+    
+    if (!token || token === 'unknown') {
+      return jsonResponse({ error: "Invalid token" }, 400);
+    }
+
+    // Verify the token exists and is valid
+    const tokenEntry = await kv.get(["token", token]);
+    if (!tokenEntry.value) {
+      return jsonResponse({ error: "Token not found" }, 404);
+    }
+
+    const tokenData = tokenEntry.value;
+    
+    // Check if token is expired
+    if (tokenData.expires_at < Date.now()) {
+      await kv.delete(["token", token]);
+      return jsonResponse({ error: "Token expired" }, 410);
+    }
+
+    // Find the key associated with this token
+    const keyEntry = await kv.get(["keys", tokenData.key]);
+    if (!keyEntry.value) {
+      return jsonResponse({ error: "Associated key not found" }, 404);
+    }
+
+    const keyData = keyEntry.value;
+    
+    // Update key with enhanced activation data
+    if (!keyData.activation_data) {
+      keyData.activation_data = {
+        discord_id: tokenData.user_id,
+        discord_username: tokenData.username,
+        activated_at: Date.now(),
+        ip: ip_address,
+        hwid: hwid,
+        hwid_methods: hwid_methods,
+        exploit_info: exploit_info,
+        system_os: system_info?.platform || 'unknown',
+        roblox_version: system_info?.roblox_version || 'unknown',
+        player_name: player_name,
+        player_userid: player_userid,
+        is_studio: system_info?.is_studio || false,
+        game_id: system_info?.game_id || 'unknown',
+        place_id: system_info?.place_id || 'unknown',
+        security_checks: security_checks,
+        first_validation: Date.now()
+      };
+    } else {
+      // Update existing activation with exploit info
+      keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
+      keyData.activation_data.hwid_methods = hwid_methods || keyData.activation_data.hwid_methods;
+      keyData.activation_data.exploit_info = exploit_info || keyData.activation_data.exploit_info;
+      keyData.activation_data.system_os = system_info?.platform || keyData.activation_data.system_os;
+      keyData.activation_data.roblox_version = system_info?.roblox_version || keyData.activation_data.roblox_version;
+      keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
+      keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
+      keyData.activation_data.last_validation = Date.now();
+      keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
+    }
+    
+    await kv.set(["keys", tokenData.key], keyData);
+
+    // Enhanced blacklist checking with exploit parameters
+    const blacklistCheck = await isBlacklisted(
+      kv, 
+      tokenData.user_id, 
+      ip_address, 
+      `Roblox/${system_info?.platform || 'unknown'}`,
+      keyData,
+      { 
+        hwid: hwid,
+        hwid_methods: hwid_methods,
+        exploit_info: exploit_info,
+        system_platform: system_info?.platform,
+        roblox_version: system_info?.roblox_version,
+        game_id: system_info?.game_id
+      }
+    );
+
+    if (blacklistCheck.blacklisted) {
+      // Log the blocked attempt with exploit info
+      await kv.set(["security", "blocked_attempts", Date.now()], {
+        key: tokenData.key,
+        token: token,
+        discord_id: tokenData.user_id,
+        ip: ip_address,
+        hwid: hwid,
+        exploit: exploit_info,
+        reason: blacklistCheck.entry?.reason,
+        severity: blacklistCheck.severity,
+        timestamp: Date.now()
+      });
+      
+      return jsonResponse({ 
+        success: false, 
+        error: "Access denied. Your account or device is blacklisted.",
+        reason: blacklistCheck.entry?.reason,
+        severity: blacklistCheck.severity,
+        exploit_detected: exploit_info?.name
+      }, 403);
+    }
+
+    // Log successful validation with exploit info
+    await kv.set(["security", "validations", Date.now()], {
+      key: tokenData.key,
+      token: token,
+      discord_id: tokenData.user_id,
+      ip: ip_address,
+      hwid: hwid,
+      exploit: exploit_info,
+      system_info: system_info,
+      timestamp: Date.now()
+    });
+
+    // Return success with exploit context
+    return jsonResponse({
+      success: true,
+      validated: true,
+      key: tokenData.key,
+      discord_user: tokenData.username,
+      activation_data: keyData.activation_data,
+      script_url: `https://api.napsy.dev/scripts/${token}`,
+      loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
+      exploit_context: exploit_info,
+      message: "Token validated successfully with enhanced security"
+    });
+
+  } catch (error) {
+    console.error("Token validation error:", error);
+    await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
+    return jsonResponse({ error: "Internal server error during validation" }, 500);
+  }
+}
       // Key activation (Discord bot only)
       if (url.pathname === '/activate' && req.method === 'POST') {
         let body;
