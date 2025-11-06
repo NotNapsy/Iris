@@ -2745,8 +2745,8 @@ const keySiteHtml = `<!DOCTYPE html>
         function updateProgress(completed) {
             currentProgress = completed;
             const percentage = (completed / TOTAL_CHECKPOINTS) * 100;
-            document.getElementById('progressFill').style.width = `${percentage}%`;
-        }
+            document.getElementById('progressFill').style.width = `${percentage}%`; // This should be inside the function
+          }
 
         function renderCheckpoints(completed) {
             const container = document.getElementById('checkpointsContainer');
