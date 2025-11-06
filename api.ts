@@ -1189,6 +1189,11 @@ async function logError(kv: Deno.Kv, error: string, req: Request, endpoint: stri
   }
 }
 
+async function getEscalationLevel(kv: Deno.Kv, discordId: string): Promise<number> {
+  const escalationEntry = await kv.get(["escalation", discordId]);
+  return escalationEntry.value?.level || 0;
+}
+
 // Cleanup expired keys and tokens
 async function cleanupExpired(kv: Deno.Kv) {
   const now = Date.now();
