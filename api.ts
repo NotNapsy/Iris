@@ -10,17 +10,6 @@ const RATE_LIMIT = {
   WORKINK_WINDOW_MS: 300000
 };
 
-// Workink Configuration
-const WORKINK_CONFIG = {
-  CHECKPOINTS_REQUIRED: 2,
-  WORKINK_LINKS: [
-    "https://work.ink/27LB/uytkj9n6",
-    "https://work.ink/27LB/ogsv775a"
-  ],
-  VALIDATION_ENDPOINT: "https://work.ink/_api/v2/token/isValid/",
-  TOKEN_PARAM: "token"
-};
-
 const AUTO_BLACKLIST_CONFIG = {
   MULTI_IP_THRESHOLD: 2, // number of unique IPs allowed per token
   ESCALATION_BASE_DAYS: 1, // start with 1 day ban
@@ -92,11 +81,6 @@ interface UserSession {
   linked_discord_ids: string[];
   privacy_agreed: boolean;
   age_verified: boolean;
-  workink_progress?: {
-    completed: number;
-    tokens: string[];
-    current_checkpoint: number;
-  };
 }
 
 // lunith Script Content
@@ -1731,78 +1715,6 @@ function monitorPerformance() {
   }
 }
 
-// ==================== WORKINK VALIDATION ====================
-
-async function validateWorkinkToken(token: string): Promise<{ valid: boolean; deleted?: boolean; info?: any }> {
-  try {
-    const response = await fetch(`${WORKINK_CONFIG.VALIDATION_ENDPOINT}${token}`);
-    
-    if (!response.ok) {
-      console.error(`Workink API error: ${response.status}`);
-      return { valid: false };
-    }
-    
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error('Workink validation error:', error);
-    return { valid: false };
-  }
-}
-
-async function completeWorkinkCheckpoint(kv: Deno.Kv, session: UserSession, token: string): Promise<{ success: boolean; checkpoint: number; completed: number }> {
-  const sessionId = `session:${session.ip}:${Buffer.from(session.user_agent).toString('base64').slice(0, 16)}`;
-  
-  // Initialize workink progress if not exists
-  if (!session.workink_progress) {
-    session.workink_progress = {
-      completed: 0,
-      tokens: [],
-      current_checkpoint: 0
-    };
-  }
-  
-  // Validate the workink token
-  const validation = await validateWorkinkToken(token);
-  
-  if (!validation.valid) {
-    return { success: false, checkpoint: session.workink_progress.current_checkpoint, completed: session.workink_progress.completed };
-  }
-  
-  // Mark checkpoint as completed
-  session.workink_progress.completed++;
-  session.workink_progress.tokens.push(token);
-  session.workink_progress.current_checkpoint = session.workink_progress.completed;
-  
-  // Update session in KV
-  await kv.set(["sessions", sessionId], session);
-  
-  return { 
-    success: true, 
-    checkpoint: session.workink_progress.current_checkpoint, 
-    completed: session.workink_progress.completed 
-  };
-}
-
-function getNextWorkinkLink(session: UserSession): string | null {
-  if (!session.workink_progress) {
-    return WORKINK_CONFIG.WORKINK_LINKS[0];
-  }
-  
-  const nextCheckpoint = session.workink_progress.completed;
-  
-  if (nextCheckpoint >= WORKINK_CONFIG.CHECKPOINTS_REQUIRED) {
-    return null; // All checkpoints completed
-  }
-  
-  return WORKINK_CONFIG.WORKINK_LINKS[nextCheckpoint];
-}
-
-function areAllWorkinksCompleted(session: UserSession): boolean {
-  return session.workink_progress?.completed >= WORKINK_CONFIG.CHECKPOINTS_REQUIRED;
-}
-
-
 // ==================== ENDPOINT HANDLERS ====================
 
 async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
@@ -1821,6 +1733,7 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
   
   const session = await getUserSession(kv, clientIP, userAgent);
   
+  // Check if user has agreed to privacy policy and age verification
   let body;
   try {
     body = await req.json();
@@ -1828,88 +1741,150 @@ async function handleWorkInk(kv: Deno.Kv, clientIP: string, userAgent: string, r
     return jsonResponse({ error: "Invalid JSON in request body" }, 400);
   }
 
-  const { privacy_agreed, age_verified, workink_token } = body;
+  const { privacy_agreed, age_verified, fingerprint_data } = body;
   
-  // Handle workink token validation (for checkpoint completion)
-  if (workink_token) {
-    const result = await completeWorkinkCheckpoint(kv, session, workink_token);
-    
-    if (!result.success) {
-      return jsonResponse({ 
-        error: "Invalid workink token. Please complete the verification properly.",
-        checkpoint: result.checkpoint,
-        completed: result.completed
-      }, 400);
-    }
-    
-    // Check if all workinks are completed
-    if (areAllWorkinksCompleted(session)) {
-      // Generate the key since all checkpoints are done
-      const key = generateFormattedKey();
-      const expiresAt = Date.now() + KEY_EXPIRY_MS;
-      
-      const keyData = {
-        key,
-        created_at: Date.now(),
-        expires_at: expiresAt,
-        activated: false,
-        workink_completed: true,
-        workink_checkpoints_completed: WORKINK_CONFIG.CHECKPOINTS_REQUIRED,
-        workink_data: {
-          ip: clientIP,
-          user_agent: userAgent,
-          completed_at: Date.now(),
-          session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
-          privacy_agreed: session.privacy_agreed,
-          age_verified: session.age_verified,
-          checkpoint_tokens: session.workink_progress?.tokens || []
-        }
-      };
-      
-      await kv.set(["keys", key], keyData);
-      await updateUserSession(kv, clientIP, userAgent, key);
-      
-      return jsonResponse({
-        success: true,
-        key: key,
-        expires_at: new Date(expiresAt).toISOString(),
-        checkpoints_completed: WORKINK_CONFIG.CHECKPOINTS_REQUIRED,
-        message: "All verifications completed successfully! Your key has been generated."
-      });
-    } else {
-      // More checkpoints needed
-      const nextLink = getNextWorkinkLink(session);
-      return jsonResponse({
-        success: true,
-        checkpoint_completed: true,
-        current_checkpoint: session.workink_progress?.completed || 0,
-        total_checkpoints: WORKINK_CONFIG.CHECKPOINTS_REQUIRED,
-        next_checkpoint_link: nextLink,
-        message: `Checkpoint ${session.workink_progress?.completed || 0}/${WORKINK_CONFIG.CHECKPOINTS_REQUIRED} completed!`
-      });
-    }
-  }
-  
-  // Initial workink request - check privacy agreement first
   if (!privacy_agreed || !age_verified) {
     return jsonResponse({ 
       error: "You must agree to the privacy policy and age verification to generate a key." 
     }, 403);
   }
   
-  // Update session with privacy agreement
+  // Update session with privacy agreement and store fingerprint if provided
   await updateUserSession(kv, clientIP, userAgent, undefined, undefined, true, true);
   
-  // Start the first workink checkpoint
-  const firstLink = getNextWorkinkLink(session);
+  // If fingerprint data is provided, store it with the session
+  if (fingerprint_data) {
+    const sessionId = `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`;
+    await kv.set(["fingerprints", sessionId], {
+      ...fingerprint_data,
+      collected_at: Date.now(),
+      user_agent: userAgent,
+      ip: clientIP
+    });
+  }
+  
+  // If session has previous keys, check if any were activated by blacklisted users
+  if (session.keys_generated.length > 0) {
+    for (const key of session.keys_generated) {
+      const keyEntry = await kv.get(["keys", key]);
+      if (keyEntry.value && keyEntry.value.activated) {
+        const discordId = keyEntry.value.activation_data?.discord_id;
+        if (discordId) {
+          // Check if this Discord ID is blacklisted
+          const userBlacklistCheck = await isBlacklisted(kv, discordId, 'unknown', 'unknown');
+          if (userBlacklistCheck.blacklisted) {
+            await logError(kv, `Session with blacklisted user attempted key generation: ${discordId}`, req, '/workink');
+            return jsonResponse({ 
+              error: "Access denied. Your session is linked to a blacklisted account.",
+              reason: userBlacklistCheck.entry?.reason,
+              severity: userBlacklistCheck.severity,
+              linked_user: discordId,
+              expires: userBlacklistCheck.entry?.expires_at ? new Date(userBlacklistCheck.entry.expires_at).toISOString() : 'Permanent'
+            }, 403);
+          }
+        }
+      }
+    }
+  }
+  
+  // Check if user already has a valid key
+  if (session.current_key) {
+    const keyEntry = await kv.get(["keys", session.current_key]);
+    if (keyEntry.value && keyEntry.value.expires_at > Date.now()) {
+      return jsonResponse({ 
+        error: "You already have an active key. Please wait until it expires to generate a new one.",
+        current_key: session.current_key,
+        expires_at: keyEntry.value.expires_at
+      }, 409);
+    }
+  }
+  
+  const key = generateFormattedKey();
+  const expiresAt = Date.now() + KEY_EXPIRY_MS;
+  
+  const keyData = {
+    key,
+    created_at: Date.now(),
+    expires_at: expiresAt,
+    activated: false,
+    workink_completed: true,
+    workink_data: {
+      ip: clientIP,
+      user_agent: userAgent,
+      completed_at: Date.now(),
+      session_id: `session:${clientIP}:${Buffer.from(userAgent).toString('base64').slice(0, 16)}`,
+      privacy_agreed: true,
+      age_verified: true,
+      fingerprint_collected: !!fingerprint_data
+    }
+  };
+  
+  await kv.set(["keys", key], keyData);
+  await updateUserSession(kv, clientIP, userAgent, key);
   
   return jsonResponse({
     success: true,
-    checkpoint_required: true,
-    current_checkpoint: 0,
-    total_checkpoints: WORKINK_CONFIG.CHECKPOINTS_REQUIRED,
-    workink_link: firstLink,
-    message: "Please complete the first verification step."
+    key: key,
+    expires_at: new Date(expiresAt).toISOString(),
+    existing_session: session.keys_generated.length > 0,
+    fingerprint_collected: !!fingerprint_data,
+    message: "Verification completed successfully"
+  });
+}
+
+async function handleRenew(kv: Deno.Kv, clientIP: string, userAgent: string, req: Request) {
+  const blacklistCheck = await isBlacklisted(kv, 'unknown', clientIP, userAgent);
+  if (blacklistCheck.blacklisted) {
+    return jsonResponse({ error: "Access denied. Your connection is blacklisted.", reason: blacklistCheck.entry?.reason }, 403);
+  }
+  
+  const session = await getUserSession(kv, clientIP, userAgent);
+  
+  if (!session.current_key) {
+    return jsonResponse({ error: "No existing key found. Please generate a new key first." }, 400);
+  }
+  
+  const renewCheck = await canRenewKey(kv, session);
+  if (!renewCheck.canRenew) {
+    return jsonResponse({ error: renewCheck.reason || "Cannot renew key at this time.", current_key: session.current_key }, 400);
+  }
+  
+  const currentKey = session.current_key;
+  const keyEntry = await kv.get(["keys", currentKey]);
+  const keyData = keyEntry.value;
+  
+  if (!keyData) {
+    return jsonResponse({ error: "Key data not found. Please generate a new key." }, 404);
+  }
+  
+  // Reset expiration dates
+  const newExpiresAt = Date.now() + KEY_EXPIRY_MS;
+  keyData.expires_at = newExpiresAt;
+  
+  // If key was activated, also reset the token expiration
+  if (keyData.activated && keyData.script_token) {
+    const tokenExpiresAt = Date.now() + TOKEN_TTL_MS;
+    const tokenEntry = await kv.get(["token", keyData.script_token]);
+    if (tokenEntry.value) {
+      const tokenData = tokenEntry.value;
+      tokenData.expires_at = tokenExpiresAt;
+      await kv.set(["token", keyData.script_token], tokenData);
+    }
+    keyData.activation_data.token_reset_at = Date.now();
+    keyData.activation_data.new_token_expires_at = tokenExpiresAt;
+  }
+  
+  // Update key data with renewal info
+  keyData.renewed_at = Date.now();
+  keyData.renewal_count = (keyData.renewal_count || 0) + 1;
+  keyData.workink_data.last_renewal = { ip: clientIP, user_agent: userAgent, renewed_at: Date.now() };
+  
+  await kv.set(["keys", currentKey], keyData);
+  metrics.refills++;
+  
+  return jsonResponse({
+    success: true, key: currentKey, expires_at: new Date(newExpiresAt).toISOString(),
+    is_renewal: true, renewal_count: keyData.renewal_count, message: "Key renewed successfully - expiration reset to 24 hours"
   });
 }
 
@@ -1932,26 +1907,6 @@ async function handleUserPanel(kv: Deno.Kv, clientIP: string, userAgent: string)
     can_renew: keyInfo ? keyInfo.expires_at < Date.now() : false
   });
 }
-
-async function handleWorkinkProgress(kv: Deno.Kv, clientIP: string, userAgent: string): Promise<Response> {
-  const session = await getUserSession(kv, clientIP, userAgent);
-  
-  const nextLink = getNextWorkinkLink(session);
-  const completed = session.workink_progress?.completed || 0;
-  
-  return jsonResponse({
-    success: true,
-    progress: {
-      completed: completed,
-      required: WORKINK_CONFIG.CHECKPOINTS_REQUIRED,
-      percentage: Math.round((completed / WORKINK_CONFIG.CHECKPOINTS_REQUIRED) * 100)
-    },
-    next_checkpoint_link: nextLink,
-    all_completed: areAllWorkinksCompleted(session)
-  });
-}
-
-
 
 async function handleTokenValidation(kv: Deno.Kv, req: Request, body: any): Promise<Response> {
   const { 
@@ -2499,8 +2454,6 @@ const keySiteHtml = `<!DOCTYPE html>
             border-radius: 10px; margin: 20px 0; border-left: 4px solid #f04747; font-weight: 500; }
         .warning { color: #faa61a; padding: 16px; background: rgba(250, 166, 26, 0.1);
             border-radius: 10px; margin: 20px 0; border-left: 4px solid #faa61a; font-weight: 500; }
-        .info { color: #7289da; padding: 16px; background: rgba(114, 137, 218, 0.1);
-            border-radius: 10px; margin: 20px 0; border-left: 4px solid #7289da; font-weight: 500; }
         .hidden { display: none; }
         .info-text { color: #aaa; font-size: 14px; line-height: 1.5; margin: 12px 0; }
         .divider { height: 1px; background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%); margin: 25px 0; }
@@ -2508,33 +2461,29 @@ const keySiteHtml = `<!DOCTYPE html>
         .step-number { background: #7289da; color: white; width: 24px; height: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; margin-right: 12px; flex-shrink: 0; }
         @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
         .loading { animation: pulse 1.5s ease-in-out infinite; }
-        .progress-bar { width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin: 15px 0; }
-        .progress-fill { height: 100%; background: linear-gradient(90deg, #43b581 0%, #7289da 100%); border-radius: 4px; transition: width 0.3s ease; }
-        .checkpoint-item { background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; margin: 10px 0; border-left: 4px solid #7289da; }
-        .checkpoint-completed { border-left-color: #43b581; }
-        .checkpoint-current { border-left-color: #faa61a; }
-        .checkpoint-status { font-size: 12px; font-weight: 600; margin-top: 5px; }
-        .status-pending { color: #faa61a; }
-        .status-completed { color: #43b581; }
-        .workink-link { 
-            display: inline-block; 
-            padding: 12px 20px; 
-            background: linear-gradient(135deg, #43b581 0%, #369a6d 100%);
-            color: white; 
-            text-decoration: none; 
-            border-radius: 8px; 
-            font-weight: 600;
-            margin: 10px 0;
-            transition: all 0.2s ease;
-        }
-        .workink-link:hover { 
-            transform: translateY(-2px); 
-            box-shadow: 0 6px 20px rgba(67, 181, 129, 0.3);
-        }
-        .checkbox-group { margin: 20px 0; }
-        .checkbox-item { display: flex; align-items: center; margin: 15px 0; }
-        .checkbox-item input[type="checkbox"] { margin-right: 12px; transform: scale(1.2); }
-        .checkbox-label { color: #e8e8e8; font-size: 14px; cursor: pointer; }
+        .expiry-notice { background: rgba(250, 166, 26, 0.1); border: 1px solid rgba(250, 166, 26, 0.3); border-radius: 8px; padding: 12px 16px; margin: 15px 0; font-size: 13px; }
+        .rate-limit-message { background: rgba(240, 71, 71, 0.1); border: 1px solid rgba(240, 71, 71, 0.3); border-radius: 8px; padding: 12px 16px; margin: 15px 0; font-size: 13px; }
+        .privacy-section { background: rgba(30, 30, 30, 0.8); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .privacy-content { max-height: 200px; overflow-y: auto; background: rgba(15, 15, 15, 0.8); padding: 15px; border-radius: 8px; margin: 15px 0; font-size: 13px; line-height: 1.4; }
+        .checkbox-group { display: flex; flex-direction: column; gap: 15px; margin: 20px 0; }
+        .checkbox-item { display: flex; align-items: flex-start; gap: 12px; padding: 12px; background: rgba(255, 255, 255, 0.03); border-radius: 8px; }
+        .checkbox-item input[type="checkbox"] { margin-top: 2px; transform: scale(1.2); }
+        .checkbox-label { font-size: 14px; line-height: 1.4; }
+        .panel-section { background: rgba(30, 30, 30, 0.8); border-radius: 12px; padding: 20px; margin: 20px 0; border: 1px solid rgba(255, 255, 255, 0.1); }
+        .panel-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; }
+        .panel-title { color: #7289da; font-size: 1.2rem; font-weight: 600; }
+        .key-status { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 15px 0; }
+        .status-item { background: rgba(255, 255, 255, 0.05); padding: 12px; border-radius: 8px; border-left: 4px solid #7289da; }
+        .status-label { font-size: 0.9rem; color: #888; margin-bottom: 5px; }
+        .status-value { font-size: 1.1rem; font-weight: 600; color: #e8e8e8; }
+        .action-buttons { display: grid; grid-template-columns: 1fr; gap: 10px; margin: 20px 0; }
+        .btn-secondary { background: linear-gradient(135deg, #43b581 0%, #369a6d 100%) !important; }
+        .btn-secondary:hover { background: linear-gradient(135deg, #369a6d 0%, #2d8a5c 100%) !important; }
+        .tab-container { display: flex; margin: 20px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); }
+        .tab { padding: 12px 20px; cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s ease; }
+        .tab.active { border-bottom-color: #7289da; color: #7289da; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
     </style>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -2546,387 +2495,339 @@ const keySiteHtml = `<!DOCTYPE html>
             <p>Key Management System</p>
         </div>
         
-        <div id="privacySection">
-            <div class="step">
-                <div class="step-number">1</div>
-                <div>
-                    <strong>Privacy Policy & Age Verification</strong>
-                    <div class="info-text">You must agree to continue</div>
-                </div>
-            </div>
-            
-            <div class="info-text">
-                <p>By using this service, you agree that we may collect and store the following information for security purposes:</p>
-                <ul>
-                    <li>Your IP Address</li>
-                    <li>Hardware identifiers</li>
-                    <li>Discord User ID</li>
-                    <li>Session information</li>
-                </ul>
-                <p>You must be 16 years or older to use this service.</p>
-            </div>
-            
-            <div class="checkbox-group">
-                <div class="checkbox-item">
-                    <input type="checkbox" id="privacyAgree">
-                    <label for="privacyAgree" class="checkbox-label">
-                        I agree to the privacy policy and data collection
-                    </label>
-                </div>
-                <div class="checkbox-item">
-                    <input type="checkbox" id="ageVerify">
-                    <label for="ageVerify" class="checkbox-label">
-                        I confirm that I am 16 years of age or older
-                    </label>
-                </div>
-            </div>
-            
-            <button onclick="verifyPrivacy()" id="privacyBtn" disabled>
-                Continue to Verification
-            </button>
+        <div class="tab-container">
+            <div class="tab active" onclick="switchTab('generate')">Generate Key</div>
+            <div class="tab" onclick="switchTab('panel')">My Panel</div>
         </div>
         
-        <div id="workinkSection" class="hidden">
-            <div class="step">
-                <div class="step-number">2</div>
-                <div>
-                    <strong>Complete Verification Steps</strong>
-                    <div class="info-text">Complete 2 verification steps to generate your key</div>
-                </div>
+        <div id="generateTab" class="tab-content active">
+            <div class="section">
+                <p>Generate your unique activation key to access Lunith services.</p>
             </div>
             
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+            <div class="expiry-notice">
+                <strong>Important:</strong> Generated keys expire in 24 hours if not activated. Activated tokens are valid for 24 hours.
             </div>
             
-            <div id="checkpointsContainer">
-                <!-- Checkpoints will be dynamically added here -->
+            <div id="rateLimitMessage" class="rate-limit-message hidden">
+                <strong>Rate Limit Exceeded:</strong> Please wait a few minutes before generating another key.
             </div>
             
-            <div id="currentCheckpoint" class="hidden">
-                <div class="checkpoint-item checkpoint-current">
-                    <strong>Current Verification Step</strong>
-                    <div class="info-text" id="currentStepDesc">Loading...</div>
-                    <a href="#" id="workinkLink" class="workink-link" target="_blank">
-                        Start Verification
-                    </a>
-                    <div class="info-text">
-                        After completing the verification, you will be redirected back with a token. 
-                        The system will automatically detect your completion.
+            <div id="privacySection" class="privacy-section">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <div>
+                        <strong>Privacy Policy & Age Verification</strong>
+                        <div class="info-text">You must agree to continue</div>
                     </div>
                 </div>
                 
-                <div class="info">
-                    <strong>How it works:</strong>
-                    <ol style="margin-left: 20px; margin-top: 10px;">
-                        <li>Click the verification link above</li>
-                        <li>Complete the verification on the Workink page</li>
-                        <li>You'll be redirected back with a token</li>
-                        <li>The system will automatically proceed to the next step</li>
-                    </ol>
+                <div class="privacy-content">
+                    <h4>Data Collection Notice</h4>
+                    <p>By using this service, you agree that we may collect and store the following information:</p>
+                    <ul>
+                        <li>Your IP Address</li>
+                        <li>Hardware ID (HWID)</li>
+                        <li>Virtual MAC Address (VMAC)</li>
+                        <li>Discord User ID</li>
+                        <li>Browser User Agent</li>
+                        <li>Session information</li>
+                    </ul>
+                    <p><strong>Purpose:</strong> This data is collected for security, anti-fraud, and service improvement purposes.</p>
+                    <p><strong>Storage:</strong> Data is stored securely and may be retained for up to 30 days after account termination.</p>
+                    <p><strong>Age Requirement:</strong> You must be 16 years or older to use this service.</p>
+                    <p>By checking the boxes below, you confirm your understanding and agreement to these terms.</p>
                 </div>
                 
-                <button onclick="checkProgress()" id="checkProgressBtn">
-                    Check Verification Status
+                <div class="checkbox-group">
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="privacyAgree">
+                        <label for="privacyAgree" class="checkbox-label">
+                            I have read and agree to the Privacy Policy and consent to the collection of my IP address, HWID, VMAC, Discord User ID, and other technical information as described above.
+                        </label>
+                    </div>
+                    <div class="checkbox-item">
+                        <input type="checkbox" id="ageVerify">
+                        <label for="ageVerify" class="checkbox-label">
+                            I confirm that I am 16 years of age or older.
+                        </label>
+                    </div>
+                </div>
+                
+                <button onclick="verifyPrivacy()" id="privacyBtn" disabled>
+                    Continue to Verification
                 </button>
             </div>
             
-            <div id="allCheckpointsCompleted" class="hidden">
+            <div id="workinkSection" class="hidden">
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <div>
+                        <strong>Start Verification</strong>
+                        <div class="info-text">This creates a key tied to your connection for security.</div>
+                    </div>
+                </div>
+                
+                <button onclick="startWorkInk()" id="workinkBtn">
+                    Begin Verification Process
+                </button>
+            </div>
+            
+            <div id="keySection" class="hidden">
                 <div class="success">
-                    <strong>All Verifications Completed!</strong>
-                    <div>Generating your activation key...</div>
+                    <strong>Verification Complete</strong>
+                    <div>Your activation key has been generated successfully.</div>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <div>
+                        <strong>Your Activation Key</strong>
+                        <div class="info-text">Copy this key and activate it within 24 hours.</div>
+                    </div>
+                </div>
+                
+                <div class="key-display" id="generatedKey">Generating your key...</div>
+                
+                <button onclick="copyKey()" id="copyBtn">
+                    Copy Key to Clipboard
+                </button>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <div>
+                        <strong>Activate in Discord</strong>
+                        <div class="info-text">Use the !activate command in our Discord server with this key to receive your loader.</div>
+                    </div>
+                </div>
+                
+                <div class="warning">
+                    <strong>Key Expires:</strong> This key will expire <span id="expiryTime">in 24 hours</span> if not activated.
                 </div>
             </div>
         </div>
         
-        <div id="keySection" class="hidden">
-            <div class="success">
-                <strong>Key Generated Successfully!</strong>
-                <div>Your activation key is ready</div>
-            </div>
-            
-            <div class="step">
-                <div class="step-number">3</div>
-                <div>
-                    <strong>Your Activation Key</strong>
-                    <div class="info-text">Copy this key and activate it within 24 hours</div>
+        <div id="panelTab" class="tab-content">
+            <div class="panel-section">
+                <div class="panel-header">
+                    <div class="panel-title">Session Overview</div>
+                </div>
+                
+                <div id="panelContent">
+                    <div class="key-status">
+                        <div class="status-item">
+                            <div class="status-label">Your IP</div>
+                            <div class="status-value" id="panelIp">Loading...</div>
+                        </div>
+                        <div class="status-item">
+                            <div class="status-label">Current Key</div>
+                            <div class="status-value" id="panelKeyStatus">Loading...</div>
+                        </div>
+                    </div>
+                    
+                    <div id="currentKeyInfo" class="hidden">
+                        <div class="step">
+                            <div class="step-number">★</div>
+                            <div>
+                                <strong>Current Active Key</strong>
+                                <div class="info-text">Your current activation key</div>
+                            </div>
+                        </div>
+                        
+                        <div class="key-display" id="panelCurrentKey">Loading...</div>
+                        
+                        <div class="action-buttons">
+                            <button onclick="copyPanelKey()" class="btn-secondary">
+                                Copy Key
+                            </button>
+                            <button onclick="renewKey()" id="renewBtn">
+                                Renew Key
+                            </button>
+                        </div>
+                        
+                        <div class="warning">
+                            <strong>Status:</strong> <span id="keyStatus">Loading...</span><br>
+                            <strong>Expires:</strong> <span id="keyExpiry">Loading...</span>
+                        </div>
+                    </div>
+                    
+                    <div id="noKeyInfo">
+                        <div class="info-text">
+                            No active key found. Generate a new key to get started.
+                        </div>
+                        <button onclick="switchTab('generate')" style="margin-top: 15px;">
+                            Generate New Key
+                        </button>
+                    </div>
                 </div>
             </div>
-            
-            <div class="key-display" id="generatedKey">Generating your key...</div>
-            
-            <button onclick="copyKey()" id="copyBtn">
-                Copy Key to Clipboard
-            </button>
-            
-            <div class="step">
-                <div class="step-number">4</div>
-                <div>
-                    <strong>Activate in Discord</strong>
-                    <div class="info-text">Use the !activate command in our Discord server with this key</div>
-                </div>
-            </div>
-            
-            <div class="warning">
-                <strong>Key Expires:</strong> This key will expire <span id="expiryTime">in 24 hours</span> if not activated.
-            </div>
-        </div>
-        
-        <div id="errorSection" class="hidden">
-            <div class="error">
-                <strong id="errorTitle">Error</strong>
-                <div id="errorMessage"></div>
-            </div>
-            <button onclick="resetProcess()">Start Over</button>
         </div>
     </div>
 
     <script>
-        const TOTAL_CHECKPOINTS = 2;
-        let currentProgress = 0;
-        let progressCheckInterval = null;
-
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+            if (tabName === 'panel') loadUserPanel();
+        }
+        
         function setupPrivacyCheckboxes() {
             const privacyCheckbox = document.getElementById('privacyAgree');
             const ageCheckbox = document.getElementById('ageVerify');
             const privacyBtn = document.getElementById('privacyBtn');
-            
             function validateCheckboxes() {
                 privacyBtn.disabled = !(privacyCheckbox.checked && ageCheckbox.checked);
             }
-            
             privacyCheckbox.addEventListener('change', validateCheckboxes);
             ageCheckbox.addEventListener('change', validateCheckboxes);
         }
-
-        async function verifyPrivacy() {
-            const btn = document.getElementById('privacyBtn');
+        
+        function verifyPrivacy() {
+            document.getElementById('privacySection').classList.add('hidden');
+            document.getElementById('workinkSection').classList.remove('hidden');
+            localStorage.setItem('privacyAgreed', 'true');
+            localStorage.setItem('ageVerified', 'true');
+        }
+        
+        async function loadUserPanel() {
+            try {
+                const response = await fetch('/user-panel');
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('panelIp').textContent = result.session.ip;
+                    if (result.current_key) {
+                        const keyExpiry = new Date(result.current_key.expires_at);
+                        const now = new Date();
+                        const isExpired = keyExpiry < now;
+                        document.getElementById('panelCurrentKey').textContent = result.current_key.key;
+                        document.getElementById('keyStatus').textContent = result.current_key.activated ? 'Activated' : 'Not Activated';
+                        document.getElementById('keyExpiry').textContent = isExpired ? 'EXPIRED' : keyExpiry.toLocaleString();
+                        document.getElementById('panelKeyStatus').textContent = isExpired ? 'Expired' : 'Active';
+                        document.getElementById('currentKeyInfo').classList.remove('hidden');
+                        document.getElementById('noKeyInfo').classList.add('hidden');
+                        document.getElementById('renewBtn').disabled = !isExpired;
+                        if (!isExpired) document.getElementById('renewBtn').textContent = 'Key Still Valid';
+                    } else {
+                        document.getElementById('currentKeyInfo').classList.add('hidden');
+                        document.getElementById('noKeyInfo').classList.remove('hidden');
+                        document.getElementById('panelKeyStatus').textContent = 'None';
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load panel:', error);
+            }
+        }
+        
+        async function renewKey() {
+            const btn = document.getElementById('renewBtn');
+            const originalText = btn.textContent;
             btn.disabled = true;
-            btn.textContent = 'Starting...';
-            
+            btn.textContent = 'Renewing...';
             try {
-                const response = await fetch('/workink', { 
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        privacy_agreed: true, 
-                        age_verified: true 
-                    })
-                });
-                
+                const response = await fetch('/renew', { method: 'POST' });
                 const result = await response.json();
-                
                 if (result.success) {
-                    document.getElementById('privacySection').classList.add('hidden');
-                    document.getElementById('workinkSection').classList.remove('hidden');
-                    
-                    if (result.checkpoint_required) {
-                        initializeWorkinkFlow(result);
-                    } else if (result.key) {
-                        // Direct key generation (fallback)
-                        showKey(result);
+                    const newExpiry = new Date(result.expires_at);
+                    document.getElementById('keyExpiry').textContent = newExpiry.toLocaleString();
+                    document.getElementById('panelKeyStatus').textContent = 'Active';
+                    if (result.renewal_count) {
+                        document.getElementById('keyStatus').textContent = 'Activated • Renewed ' + result.renewal_count + ' times';
                     }
+                    navigator.clipboard.writeText(result.key).then(() => {
+                        btn.textContent = '✓ Renewed & Copied';
+                        setTimeout(() => {
+                            btn.textContent = 'Renew Key';
+                            btn.disabled = true;
+                        }, 2000);
+                    });
                 } else {
-                    showError('Verification failed', result.error);
+                    alert('Renew failed: ' + result.error);
+                    btn.disabled = false;
+                    btn.textContent = originalText;
                 }
             } catch (error) {
-                showError('Network error', error.message);
+                alert('Network error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = originalText;
             }
         }
-
-        function initializeWorkinkFlow(data) {
-            updateProgress(data.current_checkpoint);
-            renderCheckpoints(data.current_checkpoint);
-            
-            if (data.workink_link) {
-                showCurrentCheckpoint(data.workink_link, data.current_checkpoint + 1);
-            }
-            
-            // Start checking progress periodically
-            progressCheckInterval = setInterval(checkProgress, 3000);
+        
+        function copyPanelKey() {
+            const key = document.getElementById('panelCurrentKey').textContent;
+            navigator.clipboard.writeText(key).then(() => alert('Key copied to clipboard!'));
         }
-
-        function updateProgress(completed) {
-            currentProgress = completed;
-            const percentage = (completed / TOTAL_CHECKPOINTS) * 100;
-            document.getElementById('progressFill').style.width = percentage + '%';
-        }
-
-        function renderCheckpoints(completed) {
-            const container = document.getElementById('checkpointsContainer');
-            container.innerHTML = '';
-            
-            for (let i = 0; i < TOTAL_CHECKPOINTS; i++) {
-                const checkpoint = document.createElement('div');
-                checkpoint.className = 'checkpoint-item ' + (i < completed ? 'checkpoint-completed' : '');
-                
-                checkpoint.innerHTML = 
-                    '<strong>Verification Step ' + (i + 1) + '</strong>' +
-                    '<div class="checkpoint-status ' + (i < completed ? 'status-completed' : 'status-pending') + '">' +
-                        (i < completed ? '✓ Completed' : '⏳ Pending') +
-                    '</div>';
-                
-                container.appendChild(checkpoint);
-            }
-        }
-
-        function showCurrentCheckpoint(link, stepNumber) {
-            document.getElementById('currentStepDesc').textContent = 'Step ' + stepNumber + ' of ' + TOTAL_CHECKPOINTS;
-            document.getElementById('workinkLink').href = link;
-            document.getElementById('currentCheckpoint').classList.remove('hidden');
-        }
-
-        async function checkProgress() {
-            try {
-                const response = await fetch('/workink-progress');
-                const result = await response.json();
-                
-                if (result.success) {
-                    updateProgress(result.progress.completed);
-                    renderCheckpoints(result.progress.completed);
-                    
-                    if (result.all_completed) {
-                        // All checkpoints completed, generate key
-                        completeKeyGeneration();
-                    } else if (result.next_checkpoint_link) {
-                        showCurrentCheckpoint(result.next_checkpoint_link, result.progress.completed + 1);
-                    }
-                }
-            } catch (error) {
-                console.error('Progress check failed:', error);
-            }
-        }
-
-        async function completeKeyGeneration() {
-            clearInterval(progressCheckInterval);
-            
-            document.getElementById('currentCheckpoint').classList.add('hidden');
-            document.getElementById('allCheckpointsCompleted').classList.remove('hidden');
-            
-            // Finalize key generation
-            try {
-                const response = await fetch('/workink', { 
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        privacy_agreed: true, 
-                        age_verified: true,
-                        workink_token: 'finalize' // Special token to trigger key generation
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success && result.key) {
-                    showKey(result);
-                } else {
-                    showError('Key generation failed', result.error);
-                }
-            } catch (error) {
-                showError('Network error', error.message);
-            }
-        }
-
-        function showKey(result) {
-            document.getElementById('workinkSection').classList.add('hidden');
-            document.getElementById('keySection').classList.remove('hidden');
-            document.getElementById('generatedKey').textContent = result.key;
-            updateExpiryTime();
-            
-            // Auto-copy to clipboard
-            copyKey();
-        }
-
+        
         function updateExpiryTime() {
             const expiryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
             document.getElementById('expiryTime').textContent = expiryTime.toLocaleString();
         }
 
+        async function startWorkInk() {
+            const btn = document.getElementById('workinkBtn');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Processing Verification...';
+            btn.classList.add('loading');
+            try {
+                const response = await fetch('/workink', { 
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ privacy_agreed: true, age_verified: true })
+                });
+                const result = await response.json();
+                if (result.success) {
+                    document.getElementById('workinkSection').classList.add('hidden');
+                    document.getElementById('keySection').classList.remove('hidden');
+                    document.getElementById('generatedKey').textContent = result.key;
+                    updateExpiryTime();
+                    navigator.clipboard.writeText(result.key).then(() => {
+                        document.getElementById('copyBtn').textContent = '✓ Copied Successfully';
+                        setTimeout(() => {
+                            document.getElementById('copyBtn').textContent = 'Copy Key to Clipboard';
+                        }, 2000);
+                    });
+                } else {
+                    if (result.error.includes('rate limit')) {
+                        document.getElementById('rateLimitMessage').classList.remove('hidden');
+                    }
+                    alert('Verification failed: ' + result.error);
+                    resetButton(btn, originalText);
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+                resetButton(btn, originalText);
+            }
+        }
+        
+        function resetButton(btn, text) {
+            btn.disabled = false;
+            btn.textContent = text;
+            btn.classList.remove('loading');
+        }
+        
         function copyKey() {
             const key = document.getElementById('generatedKey').textContent;
             const btn = document.getElementById('copyBtn');
-            
             navigator.clipboard.writeText(key).then(() => {
                 btn.textContent = '✓ Copied Successfully';
                 btn.style.background = 'linear-gradient(135deg, #43b581 0%, #369a6d 100%)';
-                
                 setTimeout(() => {
                     btn.textContent = 'Copy Key to Clipboard';
                     btn.style.background = 'linear-gradient(135deg, #7289da 0%, #5b73c4 100%)';
                 }, 2000);
             });
         }
-
-        function showError(title, message) {
-            document.getElementById('errorTitle').textContent = title;
-            document.getElementById('errorMessage').textContent = message;
-            document.getElementById('errorSection').classList.remove('hidden');
-            document.getElementById('privacySection').classList.add('hidden');
-            document.getElementById('workinkSection').classList.add('hidden');
-            document.getElementById('keySection').classList.add('hidden');
-            
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-            }
-        }
-
-        function resetProcess() {
-            document.getElementById('errorSection').classList.add('hidden');
-            document.getElementById('privacySection').classList.remove('hidden');
-            document.getElementById('privacyBtn').disabled = false;
-            document.getElementById('privacyBtn').textContent = 'Continue to Verification';
-            
-            if (progressCheckInterval) {
-                clearInterval(progressCheckInterval);
-            }
-        }
-
-        // Extract workink token from URL if present (for redirect back from workink)
-        function checkForWorkinkToken() {
-            const urlParams = new URLSearchParams(window.location.search);
-            const token = urlParams.get('token');
-            
-            if (token) {
-                // Automatically submit the token to complete the checkpoint
-                completeWorkinkCheckpoint(token);
-                
-                // Clean up URL
-                window.history.replaceState({}, document.title, window.location.pathname);
-            }
-        }
-
-        async function completeWorkinkCheckpoint(token) {
-            try {
-                const response = await fetch('/workink', { 
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        privacy_agreed: true, 
-                        age_verified: true,
-                        workink_token: token
-                    })
-                });
-                
-                const result = await response.json();
-                
-                if (result.success) {
-                    if (result.checkpoint_completed) {
-                        // Check progress will be handled by the interval
-                        console.log('Checkpoint completed: ' + result.current_checkpoint + '/' + result.total_checkpoints);
-                    } else if (result.key) {
-                        showKey(result);
-                    }
-                } else {
-                    showError('Verification failed', result.error);
-                }
-            } catch (error) {
-                showError('Network error', error.message);
-            }
-        }
-
+        
         document.addEventListener('DOMContentLoaded', function() {
             setupPrivacyCheckboxes();
-            checkForWorkinkToken();
+            const privacyAgreed = localStorage.getItem('privacyAgreed');
+            const ageVerified = localStorage.getItem('ageVerified');
+            if (privacyAgreed === 'true' && ageVerified === 'true') {
+                document.getElementById('privacySection').classList.add('hidden');
+                document.getElementById('workinkSection').classList.remove('hidden');
+            }
         });
     </script>
 </body>
@@ -3054,11 +2955,6 @@ export async function handler(req: Request): Promise<Response> {
             ...corsHeaders 
           } 
         });
-      }
-
-      // Add this to your main handler in the key.napsy.dev section:
-      if (url.pathname === '/workink-progress' && req.method === 'GET') {
-        return await handleWorkinkProgress(kv, clientIP, userAgent);
       }
 
       // Generate multiple keys endpoint
