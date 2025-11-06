@@ -11,6 +11,15 @@ const RATE_LIMIT = {
   WORKINK_WINDOW_MS: 300000 // 5 minutes
 };
 
+const AUTO_BLACKLIST_CONFIG = {
+  MULTI_IP_THRESHOLD: 1, // Number of unique IPs allowed per token
+  ESCALATION_BASE_DAYS: 1, // Start with 1 day ban
+  ESCALATION_MULTIPLIER: 2, // Double each time
+  MAX_ESCALATION_DAYS: 365, // Cap at 1 year
+  BAN_REASON: "Multi-IP token sharing detected",
+  SEVERITY: "HIGH" as const
+};
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
@@ -20,7 +29,7 @@ const corsHeaders = {
 // Rate limiting storage
 const rateLimit = new Map<string, { count: number; resetTime: number; workinkCount: number; workinkReset: number }>();
 
-// System metrics
+// System metricsv
 let metrics = {
   totalRequests: 0,
   successfulActivations: 0,
@@ -30,7 +39,10 @@ let metrics = {
   rateLimitHits: 0,
   errors: 0,
   blacklistChecks: 0,
-  refills: 0
+  refills: 0,
+  multiIPDetections: 0,
+  autoBlacklists: 0,
+  escalationBans: 0
 };
 
 interface BlacklistEntry {
@@ -1835,6 +1847,210 @@ export async function handler(req: Request): Promise<Response> {
           } 
         });
       }
+      // Collect all identifiers for a user across all their activities
+async function collectAllUserIdentifiers(kv: Deno.Kv, discordId: string): Promise<string[]> {
+  const identifiers: string[] = [];
+  
+  // Add Discord ID
+  identifiers.push(`discord:${discordId}`);
+  
+  // Find all keys associated with this user
+  for await (const entry of kv.list({ prefix: ["keys"] })) {
+    const keyData = entry.value;
+    if (keyData.activation_data?.discord_id === discordId) {
+      // Add key-specific identifiers
+      identifiers.push(`key:${keyData.key}`);
+      
+      if (keyData.workink_data?.ip) {
+        identifiers.push(`ip:${keyData.workink_data.ip}`);
+      }
+      if (keyData.workink_data?.user_agent) {
+        identifiers.push(`user_agent:${keyData.workink_data.user_agent}`);
+      }
+      if (keyData.activation_data?.hwid && keyData.activation_data.hwid !== 'pending') {
+        identifiers.push(`hwid:${keyData.activation_data.hwid}`);
+      }
+      if (keyData.activation_data?.executor && keyData.activation_data.executor !== 'pending') {
+        identifiers.push(`executor:${keyData.activation_data.executor}`);
+      }
+    }
+  }
+
+  async function getEscalationLevel(kv: Deno.Kv, discordId: string): Promise<number> {
+  const escalationEntry = await kv.get(["escalation", discordId]);
+  return escalationEntry.value?.level || 0;
+}
+
+  
+  // Find all sessions for this user
+  const userSessions = await findUserSessions(kv, discordId);
+  for (const session of userSessions) {
+    if (session.ip) identifiers.push(`ip:${session.ip}`);
+    if (session.user_agent) identifiers.push(`user_agent:${session.user_agent}`);
+    for (const key of session.keys_generated) {
+      identifiers.push(`session_key:${key}`);
+    }
+  }
+  
+  // Find all tokens for this user
+  for await (const entry of kv.list({ prefix: ["token"] })) {
+    const tokenData = entry.value;
+    if (tokenData.user_id === discordId) {
+      identifiers.push(`token:${entry.key[1]}`);
+    }
+  }
+  
+  return [...new Set(identifiers)]; // Remove duplicates
+}
+      async function calculateEscalationBanDuration(kv: Deno.Kv, discordId: string, uniqueIPs: number): Promise<number> {
+  const escalationLevel = await getEscalationLevel(kv, discordId);
+  const newEscalationLevel = escalationLevel + 1;
+  
+  // Store new escalation level
+  await kv.set(["escalation", discordId], {
+    level: newEscalationLevel,
+    last_escalation: Date.now(),
+    reason: "Multi-IP token sharing",
+    unique_ips: uniqueIPs
+  });
+  
+  // Calculate duration with exponential growth
+  let durationDays = AUTO_BLACKLIST_CONFIG.ESCALATION_BASE_DAYS * 
+                     Math.pow(AUTO_BLACKLIST_CONFIG.ESCALATION_MULTIPLIER, newEscalationLevel - 1);
+  
+  // Cap at maximum
+  durationDays = Math.min(durationDays, AUTO_BLACKLIST_CONFIG.MAX_ESCALATION_DAYS);
+  
+  metrics.escalationBans++;
+  
+  return Math.ceil(durationDays);
+}
+
+      async function autoBlacklistForMultiIP(
+  kv: Deno.Kv, 
+  tokenData: any, 
+  keyData: any, 
+  uniqueIPs: number,
+  triggerIP: string
+): Promise<{ success: boolean; banDurationDays: number; severity: string }> {
+  
+  // Calculate escalation ban duration
+  const banDurationDays = calculateEscalationBanDuration(kv, tokenData.user_id, uniqueIPs);
+  const banDurationMs = banDurationDays * 24 * 60 * 60 * 1000;
+  
+  // Get all relevant identifiers for comprehensive blacklisting
+  const discordId = tokenData.user_id;
+  const originalIP = keyData.workink_data?.ip;
+  const userAgent = keyData.workink_data?.user_agent;
+  
+  // Collect ALL identifiers from this user's activities
+  const allIdentifiers = await collectAllUserIdentifiers(kv, discordId);
+  
+  // Add the trigger IP and token to identifiers
+  allIdentifiers.push(`ip:${triggerIP}`);
+  allIdentifiers.push(`token:${tokenData.key}`);
+  if (originalIP) allIdentifiers.push(`ip:${originalIP}`);
+  
+  // Remove duplicates
+  const uniqueIdentifiers = [...new Set(allIdentifiers)];
+  
+  // Create comprehensive blacklist entry
+  const blacklistEntry: BlacklistEntry = {
+    discord_id: discordId,
+    ip: triggerIP,
+    user_agent: userAgent,
+    reason: `${AUTO_BLACKLIST_CONFIG.BAN_REASON} - ${uniqueIPs} unique IPs detected`,
+    severity: AUTO_BLACKLIST_CONFIG.SEVERITY,
+    created_at: Date.now(),
+    expires_at: Date.now() + banDurationMs,
+    created_by: "AUTO_BLACKLIST_SYSTEM",
+    identifiers: uniqueIdentifiers,
+    notes: `Auto-blacklisted for token sharing. Unique IPs: ${uniqueIPs}, Duration: ${banDurationDays} days, Escalation level: ${await getEscalationLevel(kv, discordId)}`
+  };
+  
+  // Store under each identifier
+  for (const identifier of uniqueIdentifiers) {
+    await kv.set(["blacklist", "identifiers", identifier], blacklistEntry);
+  }
+  
+  // Store main entry
+  await kv.set(["blacklist", "entries", discordId], blacklistEntry);
+  
+  // Revoke all active tokens and keys for this user
+  await revokeAllUserAssets(kv, discordId);
+  
+  // Log the auto-blacklist action
+  await kv.set(["auto_blacklist", "logs", Date.now()], {
+    discord_id: discordId,
+    trigger_ip: triggerIP,
+    unique_ips: uniqueIPs,
+    ban_duration_days: banDurationDays,
+    identifiers_count: uniqueIdentifiers.length,
+    revoked_assets: true,
+    escalation_level: await getEscalationLevel(kv, discordId)
+  });
+  
+  metrics.autoBlacklists++;
+  
+  return {
+    success: true,
+    banDurationDays,
+    severity: AUTO_BLACKLIST_CONFIG.SEVERITY
+  };
+}
+
+      async function trackTokenIPUsage(kv: Deno.Kv, token: string, executorIP: string, tokenData: any, keyData: any): Promise<{
+  multiIPDetected: boolean;
+  uniqueIPs: number;
+}> {
+  const ipTrackingKey = ["token_ips", token];
+  const ipEntry = await kv.get(ipTrackingKey);
+  
+  let ipData: { ips: string[]; firstSeen: number; lastSeen: number } = ipEntry.value || {
+    ips: [],
+    firstSeen: Date.now(),
+    lastSeen: Date.now()
+  };
+  
+  // Add new IP if not already tracked
+  if (!ipData.ips.includes(executorIP)) {
+    ipData.ips.push(executorIP);
+    ipData.lastSeen = Date.now();
+    
+    await kv.set(ipTrackingKey, ipData);
+  }
+  
+  const uniqueIPs = ipData.ips.length;
+  const multiIPDetected = uniqueIPs >= AUTO_BLACKLIST_CONFIG.MULTI_IP_THRESHOLD;
+  
+  return { multiIPDetected, uniqueIPs };
+}
+
+      async function checkTokenIPUsage(kv: Deno.Kv, token: string, currentIP?: string): Promise<{
+  uniqueIPs: number;
+  ips: string[];
+  firstSeen: number;
+}> {
+  const ipEntry = await kv.get(["token_ips", token]);
+  
+  if (!ipEntry.value) {
+    return { uniqueIPs: 0, ips: [], firstSeen: Date.now() };
+  }
+  
+  const ipData = ipEntry.value;
+  let uniqueIPs = ipData.ips.length;
+  
+  // If checking with a new IP, include it in count
+  if (currentIP && !ipData.ips.includes(currentIP)) {
+    uniqueIPs++;
+  }
+  
+  return {
+    uniqueIPs,
+    ips: ipData.ips,
+    firstSeen: ipData.firstSeen
+  };
+}
 
       // Generate multiple keys endpoint
       if (url.pathname === '/generate-keys' && req.method === 'POST') {
@@ -1897,220 +2113,305 @@ export async function handler(req: Request): Promise<Response> {
           return jsonResponse({ error: 'Failed to generate keys' }, 500);
         }
       }
+      async function revokeAllUserAssets(kv: Deno.Kv, discordId: string): Promise<void> {
+  let revokedCount = 0;
+  
+  // Revoke all keys
+  for await (const entry of kv.list({ prefix: ["keys"] })) {
+    const keyData = entry.value;
+    if (keyData.activation_data?.discord_id === discordId) {
+      // Mark key as revoked
+      keyData.revoked = true;
+      keyData.revoked_at = Date.now();
+      keyData.revoked_reason = "Auto-blacklist: Multi-IP token sharing";
+      await kv.set(entry.key, keyData);
+      revokedCount++;
+    }
+  }
+  
+  // Revoke all tokens
+  for await (const entry of kv.list({ prefix: ["token"] })) {
+    const tokenData = entry.value;
+    if (tokenData.user_id === discordId) {
+      await kv.delete(entry.key);
+      revokedCount++;
+    }
+  }
+  
+  // Log revocation
+  await kv.set(["auto_revocation", Date.now()], {
+    discord_id: discordId,
+    revoked_count: revokedCount,
+    timestamp: Date.now()
+  });
+}
 
       // Enhanced validation endpoint
       if (url.pathname === '/validate-token' && req.method === 'POST') {
-        try {
-          let body;
-          try {
-            body = await req.json();
-          } catch (error) {
-            return jsonResponse({ error: "Invalid JSON in request body" }, 400);
-          }
+  try {
+    let body;
+    try {
+      body = await req.json();
+    } catch (error) {
+      return jsonResponse({ error: "Invalid JSON in request body" }, 400);
+    }
 
-          const { 
-            token, 
-            executor, 
-            hwid, 
-            player_name, 
-            player_userid, 
-            other_scripts_running,
-            timestamp 
-          } = body;
-          
-          if (!token || token === 'unknown') {
-            return jsonResponse({ error: "Invalid token" }, 400);
-          }
+    return await handleTokenValidation(kv, req, body);
+  } catch (error) {
+    console.error("Token validation error:", error);
+    await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
+    return jsonResponse({ error: "Internal server error during validation" }, 500);
+  }
+}
 
-          // Get the executor's IP address
-          const executorIP = getClientIP(req);
-          
-          // Verify the token exists and is valid
-          const tokenEntry = await kv.get(["token", token]);
-          if (!tokenEntry.value) {
-            return jsonResponse({ error: "Token not found" }, 404);
-          }
+      async function handleTokenValidation(kv: Deno.Kv, req: Request, body: any): Promise<Response> {
+  const { 
+    token, 
+    executor, 
+    hwid, 
+    player_name, 
+    player_userid, 
+    other_scripts_running,
+    timestamp 
+  } = body;
+  
+  if (!token || token === 'unknown') {
+    return jsonResponse({ error: "Invalid token" }, 400);
+  }
 
-          const tokenData = tokenEntry.value;
-          
-          // Check if token is expired
-          if (tokenData.expires_at < Date.now()) {
-            await kv.delete(["token", token]);
-            return jsonResponse({ error: "Token expired" }, 410);
-          }
+  const executorIP = getClientIP(req);
+  
+  // Verify the token exists and is valid
+  const tokenEntry = await kv.get(["token", token]);
+  if (!tokenEntry.value) {
+    return jsonResponse({ error: "Token not found" }, 404);
+  }
 
-          // Find the key associated with this token
-          const keyEntry = await kv.get(["keys", tokenData.key]);
-          if (!keyEntry.value) {
-            return jsonResponse({ error: "Associated key not found" }, 404);
-          }
+  const tokenData = tokenEntry.value;
+  
+  // Check if token is expired
+  if (tokenData.expires_at < Date.now()) {
+    await kv.delete(["token", token]);
+    return jsonResponse({ error: "Token expired" }, 410);
+  }
 
-          const keyData = keyEntry.value;
-          
-          // IP VERIFICATION: Compare executor IP with original verification IP
-          const originalIP = keyData.workink_data?.ip;
-          const ipMatches = originalIP && executorIP === originalIP;
-          
-          if (!ipMatches) {
-            // Log the IP mismatch for security monitoring
-            await kv.set(["security", "ip_mismatch", Date.now()], {
-              key: tokenData.key,
-              token: token,
-              discord_id: tokenData.user_id,
-              original_ip: originalIP,
-              executor_ip: executorIP,
-              executor: executor,
-              timestamp: Date.now()
-            });
-            
-            return jsonResponse({ 
-              success: false, 
-              error: "IP address verification failed. Script execution blocked for security reasons.",
-              details: {
-                expected_ip: originalIP,
-                received_ip: executorIP,
-                ip_match: false
-              }
-            }, 403);
-          }
+  // Find the key associated with this token
+  const keyEntry = await kv.get(["keys", tokenData.key]);
+  if (!keyEntry.value) {
+    return jsonResponse({ error: "Associated key not found" }, 404);
+  }
 
-          // Continue with normal validation if IP matches...
-          const now = Date.now();
-          if (!keyData.activation_data) {
-            keyData.activation_data = {
-              discord_id: tokenData.user_id,
-              discord_username: tokenData.username,
-              activated_at: now,
-              executor: executor,
-              hwid: hwid,
-              player_name: player_name,
-              player_userid: player_userid,
-              first_validation: now,
-              validations: [{
-                timestamp: now,
-                executor: executor,
-                hwid: hwid,
-                player_name: player_name,
-                player_userid: player_userid,
-                other_scripts: other_scripts_running,
-                ip: executorIP,
-                ip_match: true
-              }]
-            };
-          } else {
-            // Update existing activation with executor IP
-            keyData.activation_data.executor = executor || keyData.activation_data.executor;
-            keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
-            keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
-            keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
-            keyData.activation_data.last_validation = now;
-            keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
-            keyData.activation_data.last_ip = executorIP;
-            
-            // Track validation history with IP
-            if (!keyData.activation_data.validations) {
-              keyData.activation_data.validations = [];
-            }
-            keyData.activation_data.validations.push({
-              timestamp: now,
-              executor: executor,
-              hwid: hwid,
-              player_name: player_name,
-              player_userid: player_userid,
-              other_scripts: other_scripts_running,
-              ip: executorIP,
-              ip_match: true
-            });
-            
-            // Keep only last 10 validations
-            if (keyData.activation_data.validations.length > 10) {
-              keyData.activation_data.validations = keyData.activation_data.validations.slice(-10);
-            }
-          }
-          
-          await kv.set(["keys", tokenData.key], keyData);
-
-          // Enhanced blacklist checking with executor IP
-          const blacklistCheck = await isBlacklisted(
-            kv, 
-            tokenData.user_id, 
-            executorIP,
-            `Executor/${executor}`,
-            keyData,
-            { 
-              hwid: hwid,
-              executor: executor,
-              player_userid: player_userid
-            }
-          );
-
-          if (blacklistCheck.blacklisted) {
-            // Log the blocked attempt
-            await kv.set(["security", "blocked_attempts", now], {
-              key: tokenData.key,
-              token: token,
-              discord_id: tokenData.user_id,
-              executor: executor,
-              hwid: hwid,
-              executor_ip: executorIP,
-              reason: blacklistCheck.entry?.reason,
-              severity: blacklistCheck.severity,
-              timestamp: now
-            });
-            
-            return jsonResponse({ 
-              success: false, 
-              error: "Access denied. Your account or device is blacklisted.",
-              reason: blacklistCheck.entry?.reason,
-              severity: blacklistCheck.severity,
-              matched_identifier: blacklistCheck.matchedIdentifier
-            }, 403);
-          }
-
-          // Log successful validation with IP
-          await kv.set(["security", "validations", now], {
-            key: tokenData.key,
-            token: token,
-            discord_id: tokenData.user_id,
-            executor: executor,
-            hwid: hwid,
-            executor_ip: executorIP,
-            player_name: player_name,
-            player_userid: player_userid,
-            other_scripts: other_scripts_running,
-            ip_match: true,
-            timestamp: now
-          });
-
-          // Return success with IP verification info
-          return jsonResponse({
-            success: true,
-            validated: true,
-            ip_verified: true,
-            key: tokenData.key,
-            discord_user: tokenData.username,
-            activation_data: {
-              discord_id: keyData.activation_data.discord_id,
-              discord_username: keyData.activation_data.discord_username,
-              activated_at: keyData.activation_data.activated_at,
-              executor: keyData.activation_data.executor,
-              hwid: keyData.activation_data.hwid,
-              player_name: keyData.activation_data.player_name,
-              validation_count: keyData.activation_data.validation_count || 1,
-              last_validation: keyData.activation_data.last_validation,
-              last_ip: executorIP
-            },
-            script_url: `https://api.napsy.dev/scripts/${token}`,
-            loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
-            message: "Token validated successfully - IP verified and execution allowed"
-          });
-
-        } catch (error) {
-          console.error("Token validation error:", error);
-          await logError(kv, `Token validation error: ${error.message}`, req, '/validate-token');
-          return jsonResponse({ error: "Internal server error during validation" }, 500);
-        }
+  const keyData = keyEntry.value;
+  
+  // Track IP usage for this token
+  const ipTrackingResult = await trackTokenIPUsage(kv, token, executorIP, tokenData, keyData);
+  
+  // If multi-IP detected, auto-blacklist and return error
+  if (ipTrackingResult.multiIPDetected) {
+    metrics.multiIPDetections++;
+    
+    // Perform auto-blacklisting with escalation
+    const blacklistResult = await autoBlacklistForMultiIP(
+      kv, 
+      tokenData, 
+      keyData, 
+      ipTrackingResult.uniqueIPs,
+      executorIP
+    );
+    
+    return jsonResponse({ 
+      success: false, 
+      error: "Token sharing detected. Access permanently revoked.",
+      details: {
+        reason: AUTO_BLACKLIST_CONFIG.BAN_REASON,
+        unique_ips_detected: ipTrackingResult.uniqueIPs,
+        ban_duration_days: blacklistResult.banDurationDays,
+        severity: blacklistResult.severity
       }
+    }, 403);
+  }
+
+  // Continue with normal validation if no multi-IP detected...
+  const now = Date.now();
+  
+  // IP VERIFICATION: Compare executor IP with original verification IP
+  const originalIP = keyData.workink_data?.ip;
+  const ipMatches = originalIP && executorIP === originalIP;
+  
+  if (!ipMatches) {
+    // Log the IP mismatch
+    await kv.set(["security", "ip_mismatch", Date.now()], {
+      key: tokenData.key,
+      token: token,
+      discord_id: tokenData.user_id,
+      original_ip: originalIP,
+      executor_ip: executorIP,
+      executor: executor,
+      timestamp: now
+    });
+    
+    // Check if this should trigger multi-IP detection
+    const ipCheck = await checkTokenIPUsage(kv, token, executorIP);
+    if (ipCheck.uniqueIPs >= AUTO_BLACKLIST_CONFIG.MULTI_IP_THRESHOLD) {
+      metrics.multiIPDetections++;
+      
+      const blacklistResult = await autoBlacklistForMultiIP(
+        kv, 
+        tokenData, 
+        keyData, 
+        ipCheck.uniqueIPs,
+        executorIP
+      );
+      
+      return jsonResponse({ 
+        success: false, 
+        error: "Token sharing detected. Multiple IPs using same token.",
+        details: {
+          reason: AUTO_BLACKLIST_CONFIG.BAN_REASON,
+          unique_ips_detected: ipCheck.uniqueIPs,
+          ban_duration_days: blacklistResult.banDurationDays,
+          severity: blacklistResult.severity
+        }
+      }, 403);
+    }
+    
+    return jsonResponse({ 
+      success: false, 
+      error: "IP address verification failed.",
+      details: {
+        expected_ip: originalIP,
+        received_ip: executorIP,
+        ip_match: false
+      }
+    }, 403);
+  }
+
+  // Rest of normal validation logic...
+  if (!keyData.activation_data) {
+    keyData.activation_data = {
+      discord_id: tokenData.user_id,
+      discord_username: tokenData.username,
+      activated_at: now,
+      executor: executor,
+      hwid: hwid,
+      player_name: player_name,
+      player_userid: player_userid,
+      first_validation: now,
+      validations: [{
+        timestamp: now,
+        executor: executor,
+        hwid: hwid,
+        player_name: player_name,
+        player_userid: player_userid,
+        other_scripts: other_scripts_running,
+        ip: executorIP,
+        ip_match: true
+      }]
+    };
+  } else {
+    // Update existing activation data...
+    keyData.activation_data.executor = executor || keyData.activation_data.executor;
+    keyData.activation_data.hwid = hwid || keyData.activation_data.hwid;
+    keyData.activation_data.player_name = player_name || keyData.activation_data.player_name;
+    keyData.activation_data.player_userid = player_userid || keyData.activation_data.player_userid;
+    keyData.activation_data.last_validation = now;
+    keyData.activation_data.validation_count = (keyData.activation_data.validation_count || 0) + 1;
+    keyData.activation_data.last_ip = executorIP;
+    
+    if (!keyData.activation_data.validations) {
+      keyData.activation_data.validations = [];
+    }
+    keyData.activation_data.validations.push({
+      timestamp: now,
+      executor: executor,
+      hwid: hwid,
+      player_name: player_name,
+      player_userid: player_userid,
+      other_scripts: other_scripts_running,
+      ip: executorIP,
+      ip_match: true
+    });
+    
+    if (keyData.activation_data.validations.length > 10) {
+      keyData.activation_data.validations = keyData.activation_data.validations.slice(-10);
+    }
+  }
+  
+  await kv.set(["keys", tokenData.key], keyData);
+
+  // Enhanced blacklist checking...
+  const blacklistCheck = await isBlacklisted(
+    kv, 
+    tokenData.user_id, 
+    executorIP,
+    `Executor/${executor}`,
+    keyData,
+    { 
+      hwid: hwid,
+      executor: executor,
+      player_userid: player_userid
+    }
+  );
+
+  if (blacklistCheck.blacklisted) {
+    await kv.set(["security", "blocked_attempts", now], {
+      key: tokenData.key,
+      token: token,
+      discord_id: tokenData.user_id,
+      executor: executor,
+      hwid: hwid,
+      executor_ip: executorIP,
+      reason: blacklistCheck.entry?.reason,
+      severity: blacklistCheck.severity,
+      timestamp: now
+    });
+    
+    return jsonResponse({ 
+      success: false, 
+      error: "Access denied. Your account or device is blacklisted.",
+      reason: blacklistCheck.entry?.reason,
+      severity: blacklistCheck.severity,
+      matched_identifier: blacklistCheck.matchedIdentifier
+    }, 403);
+  }
+
+  // Log successful validation
+  await kv.set(["security", "validations", now], {
+    key: tokenData.key,
+    token: token,
+    discord_id: tokenData.user_id,
+    executor: executor,
+    hwid: hwid,
+    executor_ip: executorIP,
+    player_name: player_name,
+    player_userid: player_userid,
+    other_scripts: other_scripts_running,
+    ip_match: true,
+    timestamp: now
+  });
+
+  return jsonResponse({
+    success: true,
+    validated: true,
+    ip_verified: true,
+    key: tokenData.key,
+    discord_user: tokenData.username,
+    activation_data: {
+      discord_id: keyData.activation_data.discord_id,
+      discord_username: keyData.activation_data.discord_username,
+      activated_at: keyData.activation_data.activated_at,
+      executor: keyData.activation_data.executor,
+      hwid: keyData.activation_data.hwid,
+      player_name: keyData.activation_data.player_name,
+      validation_count: keyData.activation_data.validation_count || 1,
+      last_validation: keyData.activation_data.last_validation,
+      last_ip: executorIP
+    },
+    script_url: `https://api.napsy.dev/scripts/${token}`,
+    loadstring: `loadstring(game:HttpGet("https://api.napsy.dev/scripts/${token}"))()`,
+    message: "Token validated successfully"
+  });
+}
 
       // Enhanced activation endpoint
       if (url.pathname === '/activate' && req.method === 'POST') {
