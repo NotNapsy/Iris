@@ -77,7 +77,6 @@ const SCRIPT_CONTENT = `print("Lunith Loader Initialized")
 
 -- Services
 local Players = game:GetService("Players")
-local HttpService = game:GetService("HttpService")
 
 -- Main script logic
 local LocalPlayer = Players.LocalPlayer
@@ -92,17 +91,6 @@ local function getExecutor()
         local success, executor = pcall(identifyexecutor)
         if success and executor then
             return tostring(executor)
-        end
-    end
-    return "Unknown"
-end
-
--- Get HWID using Wave's gethwid
-local function getHWID()
-    if gethwid then
-        local success, hwid = pcall(gethwid)
-        if success and hwid then
-            return tostring(hwid)
         end
     end
     return "Unknown"
@@ -126,10 +114,43 @@ local function checkRunningScripts()
     return 0
 end
 
--- Validate token and send identification data
+-- Better token extraction - try multiple methods
+local function extractToken()
+    -- Method 1: Try to get from script source if it's a string-based loader
+    if script and script.Source then
+        local source = script.Source
+        local token = source:match("scripts/([%w%-_]+)")
+        if token then
+            return token
+        end
+    end
+    
+    -- Method 2: Try to get from script parent hierarchy
+    if script and script.Parent then
+        local fullName = script:GetFullName()
+        local token = fullName:match("scripts/([%w%-_]+)")
+        if token then
+            return token
+        end
+    end
+    
+    -- Method 3: If executing via loadstring, check the loadstring content
+    local debugInfo = debug.getinfo(2, "S")
+    if debugInfo and debugInfo.source then
+        local source = debugInfo.source
+        local token = source:match("scripts/([%w%-_]+)")
+        if token then
+            return token
+        end
+    end
+    
+    return "unknown"
+end
+
+-- Validate token and send identification data using Wave's request function
 local function validateTokenAndIdentify(token)
     local executor = getExecutor()
-    local hwid = getHWID()
+    local hwid = gethwid()
     local otherScriptsCount = checkRunningScripts()
     
     local identificationData = {
@@ -137,25 +158,66 @@ local function validateTokenAndIdentify(token)
         executor = executor,
         hwid = hwid,
         player_name = LocalPlayer.Name,
-        player_userid = LocalPlayer.UserId,
+        player_userid = tostring(LocalPlayer.UserId),
         other_scripts_running = otherScriptsCount,
-        timestamp = os.time()
+        timestamp = tostring(os.time())
     }
     
-    -- Send identification data to server
-    local success, response = pcall(function()
-        return game:HttpPost(
-            "https://api.napsy.dev/validate-token",
-            HttpService:JSONEncode(identificationData),
-            Enum.HttpContentType.ApplicationJson
-        )
-    )
+    -- Better JSON encoding with proper escaping
+    local function encodeValue(v)
+        if type(v) == "string" then
+            -- Escape quotes and backslashes
+            v = v:gsub('"', '\\"'):gsub('\\', '\\\\')
+            return '"' .. v .. '"'
+        elseif type(v) == "number" then
+            return tostring(v)
+        else
+            return '"' .. tostring(v) .. '"'
+        end
+    end
     
-    if success then
-        local result = HttpService:JSONDecode(response)
-        return result
+    local jsonParts = {}
+    for k, v in pairs(identificationData) do
+        table.insert(jsonParts, '"' .. k .. '":' .. encodeValue(v))
+    end
+    local jsonData = "{" .. table.concat(jsonParts, ",") .. "}"
+    
+    print("Sending data:", jsonData)
+    
+    -- Send identification data to server using Wave's request function
+    if request then
+        local success, response = pcall(function()
+            return request({
+                Url = "https://api.napsy.dev/validate-token",
+                Method = "POST",
+                Headers = {
+                    ["Content-Type"] = "application/json"
+                },
+                Body = jsonData
+            })
+        end)
+        
+        if success and response then
+            print("Response Status:", response.StatusCode)
+            print("Response Body:", response.Body)
+            
+            if response.Success then
+                -- Parse the JSON response manually
+                local body = response.Body
+                if body:find('"success":true') then
+                    return {success = true}
+                else
+                    local errorMsg = body:match('"error":"([^"]+)"') or "Unknown error"
+                    return {success = false, error = errorMsg}
+                end
+            else
+                return {success = false, error = "HTTP " .. tostring(response.StatusCode)}
+            end
+        else
+            return {success = false, error = "Request failed: " .. tostring(response)}
+        end
     else
-        return {success = false, error = "Validation failed: " .. tostring(response)}
+        return {success = false, error = "Request function not available"}
     end
 end
 
@@ -163,16 +225,15 @@ end
 local function main()
     print("Starting Lunith verification...")
     
-    -- Extract token from script URL
-    local scriptUrl = script.Parent and script.Parent:GetFullName() or "Unknown"
-    local token = scriptUrl:match("scripts/([^/]+)$") or "unknown"
+    -- Extract token using improved method
+    local token = extractToken()
     
     print("Token detected:", token)
     print("Player:", LocalPlayer.Name, "(", LocalPlayer.UserId, ")")
     
     -- Get Executor and HWID
     local executor = getExecutor()
-    local hwid = getHWID()
+    local hwid = gethwid()
     
     print("Executor:", executor)
     print("HWID:", hwid)
@@ -183,13 +244,21 @@ local function main()
         print("Warning: " .. otherScripts .. " other scripts detected")
     end
     
+    -- If token is still unknown, we can't validate
+    if token == "unknown" then
+        warn("❌ Cannot extract token from script URL")
+        return "Lunith validation failed: Cannot extract token"
+    end
+    
     -- Validate token and send identification
     print("Validating token and sending identification data...")
     local validationResult = validateTokenAndIdentify(token)
     
     if validationResult.success then
         print("Token validation successful!")
-        print("Executor and HWID have been linked to your key")
+        print("Executor: " .. executor)
+        print("HWID: " .. hwid)
+        print("Both have been linked to your key")
         return "Lunith loaded successfully for " .. LocalPlayer.Name
     else
         warn("Token validation failed:", validationResult.error or "Unknown error")
