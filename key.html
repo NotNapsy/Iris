@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lunith Key System - Generate Your Access Key</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0a0f;
+            color: #ffffff;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        #canvas-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        .content {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .main-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            max-width: 700px;
+            width: 100%;
+            box-shadow: 0 8px 32px 0 rgba(0, 212, 255, 0.1);
+            animation: fadeInUp 0.8s ease;
+            overflow: hidden;
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .header {
+            text-align: center;
+            padding: 40px 40px 20px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .header h1 {
+            font-size: 36px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00d4ff 0%, #b77aff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 8px;
+        }
+
+        .header p {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(0, 0, 0, 0.2);
+        }
+
+        .tab-button {
+            flex: 1;
+            padding: 20px;
+            background: transparent;
+            border: none;
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .tab-button:hover {
+            color: rgba(255, 255, 255, 0.9);
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .tab-button.active {
+            color: #00d4ff;
+        }
+
+        .tab-button.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: linear-gradient(90deg, #00d4ff, #b77aff);
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                transform: scaleX(0);
+            }
+            to {
+                transform: scaleX(1);
+            }
+        }
+
+        /* Tab Content */
+        .tab-content {
+            padding: 40px;
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeIn 0.5s ease;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+            }
+            to {
+                opacity: 1;
+            }
+        }
+
+        /* Step Indicator */
+        .step-indicator {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .step {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .step.active {
+            background: linear-gradient(135deg, #00d4ff, #b77aff);
+            border-color: transparent;
+            box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+        }
+
+        .step.completed {
+            background: rgba(0, 255, 136, 0.2);
+            border-color: #00ff88;
+            color: #00ff88;
+        }
+
+        /* Form Elements */
+        .form-section {
+            display: none;
+            animation: slideInRight 0.4s ease;
+        }
+
+        .form-section.active {
+            display: block;
+        }
+
+        @keyframes slideInRight {
+            from {
+                opacity: 0;
+                transform: translateX(20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .checkbox-group {
+            margin-bottom: 20px;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: start;
+            gap: 12px;
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 12px;
+        }
+
+        .checkbox-label:hover {
+            background: rgba(0, 212, 255, 0.05);
+            border-color: rgba(0, 212, 255, 0.3);
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+            accent-color: #00d4ff;
+        }
+
+        .checkbox-text {
+            flex: 1;
+            font-size: 14px;
+            line-height: 1.5;
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .checkbox-text strong {
+            color: #ffffff;
+        }
+
+        /* Buttons */
+        .btn {
+            width: 100%;
+            padding: 16px;
+            border: none;
+            border-radius: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: 'Inter', sans-serif;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #00d4ff 0%, #b77aff 100%);
+            color: #ffffff;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px rgba(0, 212, 255, 0.5);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #ffffff;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Key Display */
+        .key-display {
+            background: rgba(0, 212, 255, 0.05);
+            border: 2px solid rgba(0, 212, 255, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+
+        .key-value {
+            font-family: 'Courier New', monospace;
+            font-size: 24px;
+            font-weight: 700;
+            color: #00d4ff;
+            letter-spacing: 2px;
+            margin: 10px 0;
+            word-break: break-all;
+        }
+
+        .key-info {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 10px;
+        }
+
+        /* Status Info Boxes */
+        .info-box {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .info-row:last-child {
+            border-bottom: none;
+        }
+
+        .info-label {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 14px;
+        }
+
+        .info-value {
+            color: #ffffff;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-active {
+            background: rgba(0, 255, 136, 0.2);
+            color: #00ff88;
+            border: 1px solid rgba(0, 255, 136, 0.3);
+        }
+
+        .status-expired {
+            background: rgba(255, 68, 102, 0.2);
+            color: #ff4466;
+            border: 1px solid rgba(255, 68, 102, 0.3);
+        }
+
+        .status-pending {
+            background: rgba(255, 193, 7, 0.2);
+            color: #ffc107;
+            border: 1px solid rgba(255, 193, 7, 0.3);
+        }
+
+        /* Alert Messages */
+        .alert {
+            padding: 16px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: start;
+            gap: 12px;
+            animation: slideDown 0.3s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .alert-success {
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            color: #00ff88;
+        }
+
+        .alert-error {
+            background: rgba(255, 68, 102, 0.1);
+            border: 1px solid rgba(255, 68, 102, 0.3);
+            color: #ff4466;
+        }
+
+        .alert-info {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            color: #00d4ff;
+        }
+
+        .alert-icon {
+            font-size: 20px;
+        }
+
+        .alert-content {
+            flex: 1;
+        }
+
+        /* Loading Spinner */
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-top: 3px solid #00d4ff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .main-panel {
+                margin: 10px;
+            }
+
+            .header {
+                padding: 30px 20px 15px;
+            }
+
+            .header h1 {
+                font-size: 28px;
+            }
+
+            .tab-content {
+                padding: 25px 20px;
+            }
+
+            .tab-button {
+                padding: 16px;
+                font-size: 14px;
+            }
+
+            .key-value {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas-background"></canvas>
+    
+    <div class="content">
+        <div class="main-panel">
+            <div class="header">
+                <h1>Lunith Key System</h1>
+                <p>Secure your access with our advanced key management</p>
+            </div>
+
+            <div class="tab-nav">
+                <button class="tab-button active" data-tab="generate" onclick="switchTab('generate')">
+                    Generate Key
+                </button>
+                <button class="tab-button" data-tab="panel" onclick="switchTab('panel')">
+                    My Panel
+                </button>
+            </div>
+
+            <!-- Generate Key Tab -->
+            <div class="tab-content active" id="generate-tab">
+                <div class="step-indicator">
+                    <div class="step active" id="step-1">1</div>
+                    <div class="step" id="step-2">2</div>
+                    <div class="step" id="step-3">3</div>
+                </div>
+
+                <!-- Step 1: Privacy & Age Verification -->
+                <div class="form-section active" id="section-1">
+                    <h2 style="margin-bottom: 20px; font-size: 20px;">📋 Terms & Verification</h2>
+                    
+                    <div class="checkbox-group">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="privacy-check">
+                            <div class="checkbox-text">
+                                <strong>Privacy Policy Agreement</strong><br>
+                                I agree to the privacy policy and understand that my IP address and user agent will be collected for security purposes.
+                            </div>
+                        </label>
+
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="age-check">
+                            <div class="checkbox-text">
+                                <strong>Age Verification</strong><br>
+                                I confirm that I am at least 13 years old and have parental consent if required.
+                            </div>
+                        </label>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="nextStep(1)" id="continue-btn" disabled>
+                        Continue →
+                    </button>
+                </div>
+
+                <!-- Step 2: WorkInk Verification -->
+                <div class="form-section" id="section-2">
+                    <h2 style="margin-bottom: 20px; font-size: 20px;">🛡 Security Verification</h2>
+                    
+                    <div class="alert alert-info">
+                        <span class="alert-icon">🛈</span>
+                        <div class="alert-content">
+                            Complete the verification to generate your key. This helps us prevent abuse and keep the system secure.
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="completeWorkInk()" id="workink-btn">
+                        Start Verification
+                    </button>
+
+                    <button class="btn btn-secondary" onclick="prevStep(2)" style="margin-top: 10px;">
+                        ← Back
+                    </button>
+                </div>
+
+                <!-- Step 3: Key Generated -->
+                <div class="form-section" id="section-3">
+                    <h2 style="margin-bottom: 20px; font-size: 20px;">✅ Key Generated!</h2>
+                    
+                    <div class="alert alert-success">
+                        <span class="alert-icon">✓</span>
+                        <div class="alert-content">
+                            Your key has been generated successfully! Copy it and keep it safe.
+                        </div>
+                    </div>
+
+                    <div class="key-display">
+                        <div style="font-size: 14px; color: rgba(255,255,255,0.6); margin-bottom: 8px;">YOUR KEY</div>
+                        <div class="key-value" id="generated-key">XXXX-XXXX-XXXX-XXXX</div>
+                        <div class="key-info" id="key-expiry">Expires: --</div>
+                    </div>
+
+                    <button class="btn btn-primary" onclick="copyKey()" id="copy-btn">
+                        📋 Copy Key
+                    </button>
+
+                    <div style="margin-top: 20px; padding: 16px; background: rgba(255,255,255,0.03); border-radius: 12px; font-size: 13px; color: rgba(255,255,255,0.7);">
+                        <strong>Next Steps:</strong><br>
+                        Use this key in our Discord bot or activation system to get your script loader.
+                    </div>
+                </div>
+            </div>
+
+            <!-- My Panel Tab -->
+            <div class="tab-content" id="panel-tab">
+                <div id="panel-loading" style="display: none;">
+                    <div class="spinner"></div>
+                    <p style="text-align: center; color: rgba(255,255,255,0.6);">Loading your panel...</p>
+                </div>
+
+                <div id="panel-content">
+                    <h2 style="margin-bottom: 20px; font-size: 20px;">📊 Session Information</h2>
+                    
+                    <div class="info-box">
+                        <div class="info-row">
+                            <span class="info-label">IP Address</span>
+                            <span class="info-value" id="panel-ip">--</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Keys Generated</span>
+                            <span class="info-value" id="panel-keys-count">0</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Last Active</span>
+                            <span class="info-value" id="panel-last-active">--</span>
+                        </div>
+                    </div>
+
+                    <h3 style="margin: 30px 0 15px; font-size: 18px;">Current Key</h3>
+                    
+                    <div id="panel-current-key">
+                        <!-- Will be populated dynamically -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Tab Switching
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.remove('active');
+            });
+
+            document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+            document.getElementById(`${tabName}-tab`).classList.add('active');
+
+            if (tabName === 'panel') {
+                loadPanel();
+            }
+        }
+
+        // Step Navigation
+        let currentStep = 1;
+
+        function updateStepIndicators() {
+            for (let i = 1; i <= 3; i++) {
+                const step = document.getElementById(`step-${i}`);
+                if (i < currentStep) {
+                    step.classList.add('completed');
+                    step.classList.remove('active');
+                } else if (i === currentStep) {
+                    step.classList.add('active');
+                    step.classList.remove('completed');
+                } else {
+                    step.classList.remove('active', 'completed');
+                }
+            }
+        }
+
+        function nextStep(step) {
+            document.getElementById(`section-${step}`).classList.remove('active');
+            currentStep = step + 1;
+            document.getElementById(`section-${currentStep}`).classList.add('active');
+            updateStepIndicators();
+        }
+
+        function prevStep(step) {
+            document.getElementById(`section-${step}`).classList.remove('active');
+            currentStep = step - 1;
+            document.getElementById(`section-${currentStep}`).classList.add('active');
+            updateStepIndicators();
+        }
+
+        // Checkbox validation
+        const privacyCheck = document.getElementById('privacy-check');
+        const ageCheck = document.getElementById('age-check');
+        const continueBtn = document.getElementById('continue-btn');
+
+        function updateContinueButton() {
+            continueBtn.disabled = !(privacyCheck.checked && ageCheck.checked);
+        }
+
+        privacyCheck.addEventListener('change', updateContinueButton);
+        ageCheck.addEventListener('change', updateContinueButton);
+
+        // WorkInk Verification
+        async function completeWorkInk() {
+            const btn = document.getElementById('workink-btn');
+            btn.disabled = true;
+            btn.innerHTML = '<div style="display: inline-block; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite;"></div> Verifying...';
+
+            try {
+                const response = await fetch('/workink', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        privacy_agreed: privacyCheck.checked,
+                        age_verified: ageCheck.checked
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('generated-key').textContent = result.key;
+                    document.getElementById('key-expiry').textContent = 'Expires: ' + new Date(result.expires_at).toLocaleString();
+                    nextStep(2);
+                } else {
+                    alert('Error: ' + (result.error || 'Verification failed'));
+                    btn.disabled = false;
+                    btn.textContent = 'Start Verification';
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+                btn.disabled = false;
+                btn.textContent = 'Start Verification';
+            }
+        }
+
+        // Copy Key
+        function copyKey() {
+            const keyText = document.getElementById('generated-key').textContent;
+            navigator.clipboard.writeText(keyText).then(() => {
+                const btn = document.getElementById('copy-btn');
+                btn.textContent = '✓ Copied!';
+                btn.style.background = 'linear-gradient(135deg, #00ff88, #00d4ff)';
+                setTimeout(() => {
+                    btn.textContent = '📋 Copy Key';
+                    btn.style.background = '';
+                }, 2000);
+            });
+        }
+
+        // Load Panel Data
+        async function loadPanel() {
+            const loading = document.getElementById('panel-loading');
+            const content = document.getElementById('panel-content');
+            
+            loading.style.display = 'block';
+            content.style.display = 'none';
+
+            try {
+                const response = await fetch('/user-panel');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('panel-ip').textContent = data.session.ip;
+                    document.getElementById('panel-keys-count').textContent = data.session.keys_generated;
+                    document.getElementById('panel-last-active').textContent = new Date(data.session.last_active).toLocaleString();
+
+                    const keyContainer = document.getElementById('panel-current-key');
+                    
+                    if (data.current_key) {
+                        const isExpired = data.current_key.expires_at < Date.now();
+                        const isActive = data.current_key.activated && !isExpired;
+                        
+                        keyContainer.innerHTML = `
+                            <div class="info-box">
+                                <div class="info-row">
+                                    <span class="info-label">Key</span>
+                                    <span class="info-value" style="font-family: 'Courier New', monospace; color: #00d4ff;">${data.current_key.key}</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Status</span>
+                                    <span class="status-badge ${isActive ? 'status-active' : isExpired ? 'status-expired' : 'status-pending'}">
+                                        ${isActive ? '● Active' : isExpired ? '● Expired' : '● Pending'}
+                                    </span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Created</span>
+                                    <span class="info-value">${new Date(data.current_key.created_at).toLocaleString()}</span>
+                                </div>
+                                <div class="info-row">
+                                    <span class="info-label">Expires</span>
+                                    <span class="info-value">${new Date(data.current_key.expires_at).toLocaleString()}</span>
+                                </div>
+                                ${data.current_key.renewal_count ? `
+                                <div class="info-row">
+                                    <span class="info-label">Renewals</span>
+                                    <span class="info-value">${data.current_key.renewal_count}</span>
+                                </div>
+                                ` : ''}
+                            </div>
+                            ${data.can_renew ? `
+                                <button class="btn btn-primary" onclick="renewKey()" style="margin-top: 15px;">
+                                    🔄 Renew Key
+                                </button>
+                            ` : ''}
+                        `;
+                    } else {
+                        keyContainer.innerHTML = `
+                            <div class="empty-state">
+                                <div class="empty-state-icon">🔑</div>
+                                <p>No active key found</p>
+                                <button class="btn btn-primary" onclick="switchTab('generate')" style="margin-top: 20px; max-width: 200px; margin-left: auto; margin-right: auto;">
+                                    Generate Key
+                                </button>
+                            </div>
+                        `;
+                    }
+                }
+            } catch (error) {
+                console.error('Failed to load panel:', error);
+                document.getElementById('panel-current-key').innerHTML = `
+                    <div class="alert alert-error">
+                        <span class="alert-icon">⚠</span>
+                        <div class="alert-content">Failed to load panel data. Please try again.</div>
+                    </div>
+                `;
+            } finally {
+                loading.style.display = 'none';
+                content.style.display = 'block';
+            }
+        }
+
+        // Renew Key
+        async function renewKey() {
+            try {
+                const response = await fetch('/renew', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if (result.success) {
+                    alert('Key renewed successfully!');
+                    loadPanel();
+                } else {
+                    alert('Error: ' + result.error);
+                }
+            } catch (error) {
+                alert('Network error: ' + error.message);
+            }
+        }
+
+        // 3D Background (same as API page)
+        const canvas = document.getElementById('canvas-background');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        let mouseX = 0;
+        let mouseY = 0;
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.z = Math.random() * 1000;
+                this.size = Math.random() * 2 + 1;
+                this.speedX = (Math.random() - 0.5) * 0.5;
+                this.speedY = (Math.random() - 0.5) * 0.5;
+                this.speedZ = Math.random() * 2 + 1;
+                this.color = Math.random() > 0.5 ? '#00d4ff' : '#b77aff';
+                this.opacity = Math.random() * 0.5 + 0.3;
+            }
+
+            update() {
+                this.z -= this.speedZ;
+                
+                if (this.z <= 0) {
+                    this.reset();
+                    this.z = 1000;
+                }
+
+                const parallaxX = (mouseX - canvas.width / 2) * 0.01;
+                const parallaxY = (mouseY - canvas.height / 2) * 0.01;
+
+                this.x += this.speedX + parallaxX;
+                this.y += this.speedY + parallaxY;
+
+                if (this.x < 0) this.x = canvas.width;
+                if (this.x > canvas.width) this.x = 0;
+                if (this.y < 0) this.y = canvas.height;
+                if (this.y > canvas.height) this.y = 0;
+            }
+
+            draw() {
+                const scale = 1000 / (1000 - this.z);
+                const x = (this.x - canvas.width / 2) * scale + canvas.width / 2;
+                const y = (this.y - canvas.height / 2) * scale + canvas.height / 2;
+                const size = this.size * scale;
+
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.opacity * (1 - this.z / 1000);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        class FloatingShape {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 100 + 50;
+                this.speedX = (Math.random() - 0.5) * 0.3;
+                this.speedY = (Math.random() - 0.5) * 0.3;
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.01;
+                this.type = Math.floor(Math.random() * 3);
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.rotation += this.rotationSpeed;
+
+                if (this.x < -this.size) this.x = canvas.width + this.size;
+                if (this.x > canvas.width + this.size) this.x = -this.size;
+                if (this.y < -this.size) this.y = canvas.height + this.size;
+                if (this.y > canvas.height + this.size) this.y = -this.size;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                ctx.strokeStyle = 'rgba(183, 122, 255, 0.15)';
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.3;
+
+                if (this.type === 0) {
+                    ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                } else if (this.type === 1) {
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else {
+                    ctx.beginPath();
+                    ctx.moveTo(0, -this.size / 2);
+                    ctx.lineTo(this.size / 2, this.size / 2);
+                    ctx.lineTo(-this.size / 2, this.size / 2);
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+        }
+
+        const particles = [];
+        for (let i = 0; i < 100; i++) {
+            particles.push(new Particle());
+        }
+
+        const shapes = [];
+        for (let i = 0; i < 8; i++) {
+            shapes.push(new FloatingShape());
+        }
+
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 15, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            shapes.forEach(shape => {
+                shape.update();
+                shape.draw();
+            });
+
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
