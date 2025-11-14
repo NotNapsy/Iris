@@ -5,19 +5,109 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
+// GitHub repository configuration
+const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
+const REPO_OWNER = "NotNapsy"; // Replace with your GitHub username
+const REPO_NAME = "Iris"; // Replace with your repository name
+const REPO_BRANCH = "main"; // Replace with your branch name
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
-// Load HTML files
-async function loadHtmlFile(filename: string): Promise<string> {
+// Load HTML files from GitHub
+async function loadHtmlFromGitHub(filename: string): Promise<string> {
   try {
-    return await Deno.readTextFile(filename);
+    const url = `${GITHUB_RAW_BASE}/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${filename}`;
+    console.log(`Fetching HTML from: ${url}`);
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.text();
   } catch (error) {
-    console.error(`Failed to load ${filename}:`, error);
-    return "<html><body><h1>Error loading page</h1></body></html>";
+    console.error(`Failed to load ${filename} from GitHub:`, error);
+    
+    // Fallback HTML content
+    if (filename === 'key.html') {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Lunith - Key System</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+            background: rgba(25, 25, 25, 0.95); padding: 40px;
+            border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center; max-width: 500px; width: 90%;
+        }
+        h1 { color: #7289da; margin-bottom: 20px; }
+        p { color: #aaa; margin-bottom: 20px; }
+        .error { color: #f04747; background: rgba(240, 71, 71, 0.1); 
+                padding: 15px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lunith Key System</h1>
+        <div class="error">
+            Failed to load full interface. Please check the GitHub repository configuration.
+        </div>
+        <p>Key management system for Lunith services.</p>
+    </div>
+</body>
+</html>`;
+    } else {
+      return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Lunith API</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+            background: rgba(25, 25, 25, 0.95); padding: 40px;
+            border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center; max-width: 500px; width: 90%;
+        }
+        h1 { color: #7289da; margin-bottom: 16px; }
+        .status { color: #43b581; font-weight: 600; margin: 20px 0; }
+        .error { color: #f04747; background: rgba(240, 71, 71, 0.1); 
+                padding: 15px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lunith API</h1>
+        <div class="status">API Status: Online</div>
+        <div class="error">
+            Failed to load full interface. Please check the GitHub repository configuration.
+        </div>
+        <p>Secure script delivery and key management system.</p>
+    </div>
+</body>
+</html>`;
+    }
   }
 }
 
@@ -192,29 +282,38 @@ async function handler(req: Request): Promise<Response> {
   try {
     // Subdomain routing for HTML pages
     if (url.pathname === "/" && req.method === "GET") {
-      // Check subdomain
-      if (hostname.startsWith('api.')) {
-        const apiHtml = await loadHtmlFile('./api.html');
-        return new Response(apiHtml, {
-          headers: { "Content-Type": "text/html", ...corsHeaders },
-        });
-      } else if (hostname.startsWith('key.')) {
-        const keyHtml = await loadHtmlFile('./key.html');
-        return new Response(keyHtml, {
-          headers: { "Content-Type": "text/html", ...corsHeaders },
-        });
+      let htmlContent: string;
+      
+      // Check subdomain and load appropriate HTML from GitHub
+      if (hostname.startsWith('key.')) {
+        console.log("Loading key.html from GitHub for key subdomain");
+        htmlContent = await loadHtmlFromGitHub('key.html');
+      } else if (hostname.startsWith('api.')) {
+        console.log("Loading api.html from GitHub for api subdomain");
+        htmlContent = await loadHtmlFromGitHub('api.html');
       } else {
-        // Default to API page if no subdomain
-        const apiHtml = await loadHtmlFile('./api.html');
-        return new Response(apiHtml, {
-          headers: { "Content-Type": "text/html", ...corsHeaders },
-        });
+        // Default to API page if no specific subdomain
+        console.log("Loading api.html from GitHub for default domain");
+        htmlContent = await loadHtmlFromGitHub('api.html');
       }
+      
+      return new Response(htmlContent, {
+        headers: { 
+          "Content-Type": "text/html; charset=utf-8", 
+          ...corsHeaders 
+        },
+      });
     }
 
     // Health check
     if (url.pathname === "/health") {
-      return new Response("OK", { headers: corsHeaders });
+      return jsonResponse({ 
+        status: "online", 
+        service: "lunith-key-system",
+        timestamp: new Date().toISOString(),
+        github_repo: `${REPO_OWNER}/${REPO_NAME}`,
+        domain: hostname
+      });
     }
 
     // Fetch script
@@ -262,7 +361,7 @@ async function handler(req: Request): Promise<Response> {
         created_at: Date.now(),
       });
 
-      const scriptUrl = `https://api.napsy.dev/scripts/${token}`;
+      const scriptUrl = `https://${hostname}/scripts/${token}`;
       const loadstringStr = `loadstring(game:HttpGet("${scriptUrl}"))()`;
 
       return jsonResponse({
@@ -437,5 +536,8 @@ async function handler(req: Request): Promise<Response> {
 }
 
 // Start server
-console.log("Server starting...");
+console.log("Lunith Key System Server starting...");
+console.log("GitHub Repository:", `${REPO_OWNER}/${REPO_NAME}`);
+console.log("Server running on port 8000");
+
 serve(handler, { port: 8000 });
