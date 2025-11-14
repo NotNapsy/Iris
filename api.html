@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lunith API - Roblox ScriptHub</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0a0f;
+            color: #ffffff;
+            overflow-x: hidden;
+            min-height: 100vh;
+        }
+
+        /* 3D Background Canvas */
+        #canvas-background {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+
+        /* Content Container */
+        .content {
+            position: relative;
+            z-index: 1;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* Glassmorphism Panel */
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 24px;
+            padding: 60px 50px;
+            max-width: 600px;
+            width: 100%;
+            box-shadow: 0 8px 32px 0 rgba(0, 212, 255, 0.1);
+            transition: all 0.3s ease;
+            animation: fadeInUp 0.8s ease;
+        }
+
+        .glass-panel:hover {
+            box-shadow: 0 12px 48px 0 rgba(0, 212, 255, 0.2);
+            transform: translateY(-5px);
+        }
+
+        @keyframes fadeInUp {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Logo/Brand */
+        .brand {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .brand h1 {
+            font-size: 48px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #00d4ff 0%, #b77aff 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 10px;
+            text-shadow: 0 0 40px rgba(0, 212, 255, 0.3);
+        }
+
+        .brand .tagline {
+            font-size: 16px;
+            color: rgba(255, 255, 255, 0.6);
+            font-weight: 300;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 255, 136, 0.1);
+            border: 1px solid rgba(0, 255, 136, 0.3);
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 14px;
+            font-weight: 500;
+            color: #00ff88;
+            margin-bottom: 30px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background: #00ff88;
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% {
+                opacity: 1;
+                box-shadow: 0 0 10px rgba(0, 255, 136, 0.8);
+            }
+            50% {
+                opacity: 0.6;
+                box-shadow: 0 0 20px rgba(0, 255, 136, 0.4);
+            }
+        }
+
+        /* Description */
+        .description {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .description p {
+            font-size: 18px;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.8);
+            margin-bottom: 15px;
+        }
+
+        /* Features List */
+        .features {
+            margin-bottom: 40px;
+        }
+
+        .feature-item {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+            border: 1px solid transparent;
+        }
+
+        .feature-item:hover {
+            background: rgba(0, 212, 255, 0.05);
+            border-color: rgba(0, 212, 255, 0.3);
+            transform: translateX(5px);
+        }
+
+        .feature-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #00d4ff 0%, #b77aff 100%);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            flex-shrink: 0;
+        }
+
+        .feature-text {
+            flex: 1;
+        }
+
+        .feature-text h3 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 4px;
+            color: #ffffff;
+        }
+
+        .feature-text p {
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+
+        /* CTA Button */
+        .cta-button {
+            display: block;
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #00d4ff 0%, #b77aff 100%);
+            border: none;
+            border-radius: 12px;
+            color: #ffffff;
+            font-size: 18px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0, 212, 255, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cta-button::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.3), transparent);
+            transition: left 0.5s ease;
+        }
+
+        .cta-button:hover::before {
+            left: 100%;
+        }
+
+        .cta-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px rgba(0, 212, 255, 0.5);
+        }
+
+        .cta-button:active {
+            transform: translateY(0);
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .glass-panel {
+                padding: 40px 30px;
+            }
+
+            .brand h1 {
+                font-size: 36px;
+            }
+
+            .description p {
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas-background"></canvas>
+    
+    <div class="content">
+        <div class="glass-panel">
+            <div class="brand">
+                <h1>⚡ Lunith API</h1>
+                <p class="tagline">Secure Script Delivery System</p>
+            </div>
+
+            <center>
+                <div class="status-badge">
+                    <span class="status-dot"></span>
+                    <span>API Status: Online</span>
+                </div>
+            </center>
+
+            <div class="description">
+                <p>Advanced Roblox script distribution platform with military-grade security and seamless integration.</p>
+            </div>
+
+            <div class="features">
+                <div class="feature-item">
+                    <div class="feature-icon">🔐</div>
+                    <div class="feature-text">
+                        <h3>Secure Authentication</h3>
+                        <p>Token-based system with multi-layer verification</p>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-icon">⚡</div>
+                    <div class="feature-text">
+                        <h3>Lightning Fast</h3>
+                        <p>Optimized delivery with 99.9% uptime</p>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-icon">🛡️</div>
+                    <div class="feature-text">
+                        <h3>Anti-Abuse Protection</h3>
+                        <p>Advanced blacklist and rate limiting system</p>
+                    </div>
+                </div>
+
+                <div class="feature-item">
+                    <div class="feature-icon">🔄</div>
+                    <div class="feature-text">
+                        <h3>Real-time Monitoring</h3>
+                        <p>Live session tracking and analytics</p>
+                    </div>
+                </div>
+            </div>
+
+            <a href="https://key.napsy.dev" class="cta-button">
+                Get Your Key →
+            </a>
+        </div>
+    </div>
+
+    <script>
+        // 3D Particle System
+        const canvas = document.getElementById('canvas-background');
+        const ctx = canvas.getContext('2d');
+        
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        });
+
+        // Mouse position for parallax
+        let mouseX = 0;
+        let mouseY = 0;
+
+        window.addEventListener('mousemove', (e) => {
+            mouseX = e.clientX;
+            mouseY = e.clientY;
+        });
+
+        // Particle class
+        class Particle {
+            constructor() {
+                this.reset();
+            }
+
+            reset() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.z = Math.random() * 1000;
+                this.size = Math.random() * 2 + 1;
+                this.speedX = (Math.random() - 0.5) * 0.5;
+                this.speedY = (Math.random() - 0.5) * 0.5;
+                this.speedZ = Math.random() * 2 + 1;
+                this.color = Math.random() > 0.5 ? '#00d4ff' : '#b77aff';
+                this.opacity = Math.random() * 0.5 + 0.3;
+            }
+
+            update() {
+                this.z -= this.speedZ;
+                
+                if (this.z <= 0) {
+                    this.reset();
+                    this.z = 1000;
+                }
+
+                // Parallax effect
+                const parallaxX = (mouseX - canvas.width / 2) * 0.01;
+                const parallaxY = (mouseY - canvas.height / 2) * 0.01;
+
+                this.x += this.speedX + parallaxX;
+                this.y += this.speedY + parallaxY;
+
+                // Wrap around edges
+                if (this.x < 0) this.x = canvas.width;
+                if (this.x > canvas.width) this.x = 0;
+                if (this.y < 0) this.y = canvas.height;
+                if (this.y > canvas.height) this.y = 0;
+            }
+
+            draw() {
+                const scale = 1000 / (1000 - this.z);
+                const x = (this.x - canvas.width / 2) * scale + canvas.width / 2;
+                const y = (this.y - canvas.height / 2) * scale + canvas.height / 2;
+                const size = this.size * scale;
+
+                ctx.beginPath();
+                ctx.arc(x, y, size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.globalAlpha = this.opacity * (1 - this.z / 1000);
+                ctx.fill();
+                ctx.globalAlpha = 1;
+
+                // Glow effect
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = this.color;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        // Floating shape class
+        class FloatingShape {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 100 + 50;
+                this.speedX = (Math.random() - 0.5) * 0.3;
+                this.speedY = (Math.random() - 0.5) * 0.3;
+                this.rotation = Math.random() * Math.PI * 2;
+                this.rotationSpeed = (Math.random() - 0.5) * 0.01;
+                this.type = Math.floor(Math.random() * 3); // 0: square, 1: circle, 2: triangle
+            }
+
+            update() {
+                this.x += this.speedX;
+                this.y += this.speedY;
+                this.rotation += this.rotationSpeed;
+
+                if (this.x < -this.size) this.x = canvas.width + this.size;
+                if (this.x > canvas.width + this.size) this.x = -this.size;
+                if (this.y < -this.size) this.y = canvas.height + this.size;
+                if (this.y > canvas.height + this.size) this.y = -this.size;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.rotation);
+                
+                ctx.strokeStyle = 'rgba(0, 212, 255, 0.15)';
+                ctx.lineWidth = 2;
+                ctx.globalAlpha = 0.3;
+
+                if (this.type === 0) {
+                    // Square
+                    ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+                } else if (this.type === 1) {
+                    // Circle
+                    ctx.beginPath();
+                    ctx.arc(0, 0, this.size / 2, 0, Math.PI * 2);
+                    ctx.stroke();
+                } else {
+                    // Triangle
+                    ctx.beginPath();
+                    ctx.moveTo(0, -this.size / 2);
+                    ctx.lineTo(this.size / 2, this.size / 2);
+                    ctx.lineTo(-this.size / 2, this.size / 2);
+                    ctx.closePath();
+                    ctx.stroke();
+                }
+
+                ctx.restore();
+            }
+        }
+
+        // Create particles and shapes
+        const particles = [];
+        for (let i = 0; i < 100; i++) {
+            particles.push(new Particle());
+        }
+
+        const shapes = [];
+        for (let i = 0; i < 8; i++) {
+            shapes.push(new FloatingShape());
+        }
+
+        // Animation loop
+        function animate() {
+            ctx.fillStyle = 'rgba(10, 10, 15, 0.1)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Draw and update shapes
+            shapes.forEach(shape => {
+                shape.update();
+                shape.draw();
+            });
+
+            // Draw and update particles
+            particles.forEach(particle => {
+                particle.update();
+                particle.draw();
+            });
+
+            requestAnimationFrame(animate);
+        }
+
+        animate();
+    </script>
+</body>
+</html>
