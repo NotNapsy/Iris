@@ -5,11 +5,13 @@ const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 const KEY_EXPIRY_MS = 24 * 60 * 60 * 1000; // 24 hours for unactivated keys
 const ADMIN_API_KEY = "mR8q7zKp4VxT1bS9nYf3Lh6Gd0Uw2Qe5Zj7Rc4Pv8Nk1Ba6Mf0Xs3Qp9Lr2Tz";
 
-// GitHub repository configuration
-const GITHUB_RAW_BASE = "https://raw.githubusercontent.com";
-const REPO_OWNER = "NotNapsy"; // Replace with your GitHub username
-const REPO_NAME = "Iris"; // Replace with your repository name
-const REPO_BRANCH = "main"; // Replace with your branch name
+// File system configuration
+const STATIC_DIR = "./static";
+const DEFAULT_PAGES = {
+  'key': 'key.html',
+  'api': 'api.html',
+  'admin': 'admin.html'
+};
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -17,26 +19,27 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, X-Admin-Api-Key",
 };
 
-// Load HTML files from GitHub
-async function loadHtmlFromGitHub(filename: string): Promise<string> {
+// Ensure static directory exists
+async function ensureStaticDir(): Promise<void> {
   try {
-    const url = `${GITHUB_RAW_BASE}/${REPO_OWNER}/${REPO_NAME}/${REPO_BRANCH}/${filename}`;
-    console.log(`Fetching HTML from: ${url}`);
-    
-    const response = await fetch(url);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-    }
-    
-    return await response.text();
+    await Deno.stat(STATIC_DIR);
   } catch (error) {
-    console.error(`Failed to load ${filename} from GitHub:`, error);
-    
-    // Fallback HTML content
-    if (filename === 'key.html') {
-      return `
-<!DOCTYPE html>
+    if (error instanceof Deno.errors.NotFound) {
+      console.log(`Creating static directory: ${STATIC_DIR}`);
+      await Deno.mkdir(STATIC_DIR, { recursive: true });
+      
+      // Create default HTML files if they don't exist
+      await createDefaultFiles();
+    } else {
+      throw error;
+    }
+  }
+}
+
+// Create default HTML files
+async function createDefaultFiles(): Promise<void> {
+  const defaultFiles = {
+    'key.html': `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -56,23 +59,20 @@ async function loadHtmlFromGitHub(filename: string): Promise<string> {
         }
         h1 { color: #7289da; margin-bottom: 20px; }
         p { color: #aaa; margin-bottom: 20px; }
-        .error { color: #f04747; background: rgba(240, 71, 71, 0.1); 
-                padding: 15px; border-radius: 8px; margin: 20px 0; }
+        .status { color: #43b581; font-weight: 600; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Lunith Key System</h1>
-        <div class="error">
-            Failed to load full interface. Please check the GitHub repository configuration.
-        </div>
-        <p>Key management system for Lunith services.</p>
+        <div class="status">Key Management Interface</div>
+        <p>Generate and manage your activation keys for Lunith services.</p>
+        <p><em>Customize this page in static/key.html</em></p>
     </div>
 </body>
-</html>`;
-    } else {
-      return `
-<!DOCTYPE html>
+</html>`,
+
+    'api.html': `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
@@ -92,23 +92,194 @@ async function loadHtmlFromGitHub(filename: string): Promise<string> {
         }
         h1 { color: #7289da; margin-bottom: 16px; }
         .status { color: #43b581; font-weight: 600; margin: 20px 0; }
-        .error { color: #f04747; background: rgba(240, 71, 71, 0.1); 
-                padding: 15px; border-radius: 8px; margin: 20px 0; }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>Lunith API</h1>
         <div class="status">API Status: Online</div>
-        <div class="error">
-            Failed to load full interface. Please check the GitHub repository configuration.
-        </div>
         <p>Secure script delivery and key management system.</p>
+        <p><em>Customize this page in static/api.html</em></p>
+    </div>
+</body>
+</html>`,
+
+    'admin.html': `<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Lunith Admin</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif;
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+            background: rgba(25, 25, 25, 0.95); padding: 40px;
+            border-radius: 20px; border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center; max-width: 500px; width: 90%;
+        }
+        h1 { color: #7289da; margin-bottom: 16px; }
+        .status { color: #faa61a; font-weight: 600; margin: 20px 0; }
+        .warning { color: #faa61a; background: rgba(250, 166, 26, 0.1); 
+                 padding: 15px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lunith Admin Panel</h1>
+        <div class="status">Administrative Interface</div>
+        <div class="warning">
+            <strong>Restricted Access:</strong> Admin authentication required.
+        </div>
+        <p><em>Customize this page in static/admin.html</em></p>
+    </div>
+</body>
+</html>`
+  };
+
+  for (const [filename, content] of Object.entries(defaultFiles)) {
+    const filePath = `${STATIC_DIR}/${filename}`;
+    try {
+      await Deno.writeTextFile(filePath, content);
+      console.log(`Created default file: ${filePath}`);
+    } catch (error) {
+      console.error(`Failed to create ${filePath}:`, error);
+    }
+  }
+}
+
+// Load HTML files from file system
+async function loadHtmlFile(filename: string): Promise<string> {
+  try {
+    const filePath = `${STATIC_DIR}/${filename}`;
+    console.log(`Loading HTML from: ${filePath}`);
+    
+    // Check if file exists
+    try {
+      await Deno.stat(filePath);
+    } catch (error) {
+      if (error instanceof Deno.errors.NotFound) {
+        throw new Error(`File not found: ${filePath}`);
+      }
+      throw error;
+    }
+    
+    // Read and return file content
+    return await Deno.readTextFile(filePath);
+  } catch (error) {
+    console.error(`Failed to load ${filename}:`, error);
+    
+    // Fallback HTML content
+    return `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Lunith - Error</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { 
+            font-family: 'Inter', sans-serif; 
+            background: linear-gradient(135deg, #0c0c0c 0%, #1a1a1a 100%);
+            color: #e8e8e8; min-height: 100vh;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .container { 
+            background: rgba(25, 25, 25, 0.95); padding: 40px;
+            border-radius: 16px; border: 1px solid rgba(255, 255, 255, 0.1);
+            text-align: center; max-width: 500px; width: 90%;
+        }
+        h1 { color: #7289da; margin-bottom: 20px; }
+        .error { color: #f04747; background: rgba(240, 71, 71, 0.1); 
+                padding: 15px; border-radius: 8px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Lunith System</h1>
+        <div class="error">
+            Failed to load interface: ${error.message}
+        </div>
+        <p>Please check the static files directory.</p>
     </div>
 </body>
 </html>`;
-    }
   }
+}
+
+// Serve static files (CSS, JS, images, etc.)
+async function serveStaticFile(filepath: string): Promise<Response> {
+  try {
+    const fullPath = `${STATIC_DIR}${filepath}`;
+    
+    // Security: Prevent directory traversal
+    if (filepath.includes('..')) {
+      return new Response("Forbidden", { status: 403 });
+    }
+    
+    const fileInfo = await Deno.stat(fullPath);
+    if (!fileInfo.isFile) {
+      return new Response("Not found", { status: 404 });
+    }
+    
+    const fileContent = await Deno.readFile(fullPath);
+    const contentType = getContentType(filepath);
+    
+    return new Response(fileContent, {
+      headers: {
+        "Content-Type": contentType,
+        ...corsHeaders,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Deno.errors.NotFound) {
+      return new Response("File not found", { status: 404 });
+    }
+    console.error("Static file error:", error);
+    return new Response("Internal server error", { status: 500 });
+  }
+}
+
+// Get content type based on file extension
+function getContentType(filepath: string): string {
+  const extension = filepath.split('.').pop()?.toLowerCase();
+  
+  const contentTypes: { [key: string]: string } = {
+    'html': 'text/html',
+    'css': 'text/css',
+    'js': 'application/javascript',
+    'json': 'application/json',
+    'png': 'image/png',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+    'gif': 'image/gif',
+    'svg': 'image/svg+xml',
+    'ico': 'image/x-icon',
+    'txt': 'text/plain'
+  };
+  
+  return contentTypes[extension || ''] || 'application/octet-stream';
+}
+
+// List available static files (for debugging)
+async function listStaticFiles(): Promise<string[]> {
+  const files: string[] = [];
+  
+  try {
+    for await (const entry of Deno.readDir(STATIC_DIR)) {
+      if (entry.isFile) {
+        files.push(entry.name);
+      }
+    }
+  } catch (error) {
+    console.error("Error listing static files:", error);
+  }
+  
+  return files;
 }
 
 // Script content
@@ -273,6 +444,7 @@ async function updateUserSession(kv: any, ip: string, userAgent: string, newKey?
 async function handler(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const hostname = url.hostname || req.headers.get('host')?.split(':')[0] || '';
+  const pathname = url.pathname;
   
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
@@ -280,23 +452,35 @@ async function handler(req: Request): Promise<Response> {
   }
 
   try {
+    // Ensure static directory exists
+    await ensureStaticDir();
+
+    // Serve static files (CSS, JS, images, etc.)
+    if (pathname.startsWith('/static/') && req.method === "GET") {
+      return await serveStaticFile(pathname);
+    }
+
     // Subdomain routing for HTML pages
-    if (url.pathname === "/" && req.method === "GET") {
-      let htmlContent: string;
+    if (pathname === "/" && req.method === "GET") {
+      let htmlFilename: string;
       
-      // Check subdomain and load appropriate HTML from GitHub
+      // Determine which HTML file to serve based on subdomain
       if (hostname.startsWith('key.')) {
-        console.log("Loading key.html from GitHub for key subdomain");
-        htmlContent = await loadHtmlFromGitHub('key.html');
+        htmlFilename = DEFAULT_PAGES.key;
+        console.log("Serving key.html for key subdomain");
       } else if (hostname.startsWith('api.')) {
-        console.log("Loading api.html from GitHub for api subdomain");
-        htmlContent = await loadHtmlFromGitHub('api.html');
+        htmlFilename = DEFAULT_PAGES.api;
+        console.log("Serving api.html for api subdomain");
+      } else if (hostname.startsWith('admin.')) {
+        htmlFilename = DEFAULT_PAGES.admin;
+        console.log("Serving admin.html for admin subdomain");
       } else {
         // Default to API page if no specific subdomain
-        console.log("Loading api.html from GitHub for default domain");
-        htmlContent = await loadHtmlFromGitHub('api.html');
+        htmlFilename = DEFAULT_PAGES.api;
+        console.log("Serving api.html for default domain");
       }
       
+      const htmlContent = await loadHtmlFile(htmlFilename);
       return new Response(htmlContent, {
         headers: { 
           "Content-Type": "text/html; charset=utf-8", 
@@ -305,20 +489,33 @@ async function handler(req: Request): Promise<Response> {
       });
     }
 
-    // Health check
-    if (url.pathname === "/health") {
+    // Health check with file system info
+    if (pathname === "/health" && req.method === "GET") {
+      const staticFiles = await listStaticFiles();
+      
       return jsonResponse({ 
         status: "online", 
         service: "lunith-key-system",
         timestamp: new Date().toISOString(),
-        github_repo: `${REPO_OWNER}/${REPO_NAME}`,
-        domain: hostname
+        domain: hostname,
+        static_files: staticFiles,
+        static_directory: STATIC_DIR
+      });
+    }
+
+    // Debug endpoint to list all available files
+    if (pathname === "/debug/files" && req.method === "GET") {
+      const staticFiles = await listStaticFiles();
+      return jsonResponse({
+        static_directory: STATIC_DIR,
+        available_files: staticFiles,
+        default_pages: DEFAULT_PAGES
       });
     }
 
     // Fetch script
-    if (url.pathname.startsWith("/scripts/") && req.method === "GET") {
-      const token = url.pathname.split("/")[2];
+    if (pathname.startsWith("/scripts/") && req.method === "GET") {
+      const token = pathname.split("/")[2];
       if (!token) return new Response("Token required", { status: 400 });
 
       const data = await getToken(token);
@@ -335,10 +532,10 @@ async function handler(req: Request): Promise<Response> {
     }
 
     // Publish script
-    if (url.pathname === "/publishScript" && req.method === "POST") {
+    if (pathname === "/publishScript" && req.method === "POST") {
       const apiKey = req.headers.get("X-Admin-Api-Key");
       if (apiKey !== ADMIN_API_KEY) {
-        return jsonResponse({ error: "Unauthorized" }, 401);
+        return jsonResponse({ error: "Unauthorized" }, 401 );
       }
 
       let body;
@@ -373,7 +570,7 @@ async function handler(req: Request): Promise<Response> {
     }
 
     // WorkInk verification - Generate Key
-    if (url.pathname === "/workink" && req.method === "POST") {
+    if (pathname === "/workink" && req.method === "POST") {
       const kv = await getKv();
       const clientIP = getClientIP(req);
       const userAgent = req.headers.get('user-agent') || 'unknown';
@@ -444,7 +641,7 @@ async function handler(req: Request): Promise<Response> {
     }
 
     // User Panel - Get session info
-    if (url.pathname === "/user-panel" && req.method === "GET") {
+    if (pathname === "/user-panel" && req.method === "GET") {
       const kv = await getKv();
       const clientIP = getClientIP(req);
       const userAgent = req.headers.get('user-agent') || 'unknown';
@@ -483,7 +680,7 @@ async function handler(req: Request): Promise<Response> {
     }
 
     // Renew Key
-    if (url.pathname === "/renew" && req.method === "POST") {
+    if (pathname === "/renew" && req.method === "POST") {
       const kv = await getKv();
       const clientIP = getClientIP(req);
       const userAgent = req.headers.get('user-agent') || 'unknown';
@@ -537,7 +734,14 @@ async function handler(req: Request): Promise<Response> {
 
 // Start server
 console.log("Lunith Key System Server starting...");
-console.log("GitHub Repository:", `${REPO_OWNER}/${REPO_NAME}`);
+console.log("Static directory:", STATIC_DIR);
 console.log("Server running on port 8000");
+console.log("Available endpoints:");
+console.log("  - key.* -> static/key.html");
+console.log("  - api.* -> static/api.html");
+console.log("  - admin.* -> static/admin.html");
+console.log("  - /static/* -> Serve static files");
+console.log("  - /health -> Health check");
+console.log("  - /debug/files -> List available files");
 
 serve(handler, { port: 8000 });
